@@ -1,0 +1,58 @@
+[project]
+dependencies = []
+name = "spot-detection-benchmark"
+requires-python = ">= 3.11"
+version = "0.1.0"
+
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["win-64"]
+
+[tool.pixi.pypi-dependencies]
+spot_detection_benchmark = { path = ".", editable = true }
+
+[tool.pixi.tasks]
+
+[tool.pixi.feature.deepblink.dependencies]
+python = "3.9.*"
+numpy = "<2"
+jupyterlab = ">=4.4.6,<5"
+
+[tool.pixi.feature.deepblink.tasks]
+deep_jlab = "jupyter lab"
+
+[tool.pixi.environments]
+deepblink = { features = ["deepblink"], no-default-feature = true }
+spotiflow = { features = ["spotiflow"], no-default-feature = true }
+napari = ["napari"]
+ufish = ["ufish"]
+piscis = ["piscis"]
+
+[tool.pixi.dependencies]
+git-lfs = ">=3.7.1,<4"
+
+[dependency-groups]
+deepblink = ["tensorflow<2.16", "deepblink>=0.1.4,<0.2"]
+spotiflow = ["torch>=2.13.0,<3", "torchvision>=0.28.0,<0.29", "spotiflow>=0.6.5,<0.7"]
+piscis = ["piscis"]
+
+[tool.pixi.feature.deepblink.activation.env]
+PYTHONPATH = "tools"
+
+[tool.pixi.feature.spotiflow.dependencies]
+python = "3.12.*"
+jupyterlab = ">=4.6.1,<5"
+
+[tool.pixi.feature.spotiflow.tasks]
+spotiflow_jlab = "jupyter lab"
+
+[tool.pixi.feature.napari.dependencies]
+napari = ">=0.8.0,<0.9"
+pyqt6 = ">=6.8.1,<7"
+
+[tool.pixi.feature.ufish.dependencies]
+ufish = ">=0.1.1,<0.2"
