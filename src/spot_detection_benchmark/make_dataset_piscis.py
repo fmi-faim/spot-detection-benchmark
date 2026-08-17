@@ -6,18 +6,17 @@ import pandas as pd
 CANON  = Path(r"C:\Data\soucemma\spot-detection-benchmark\datasets\training_test")
 PISCIS = Path(r"C:\Data\soucemma\spot-detection-benchmark\datasets\training_test\piscis_dataset")
 
-# canonical split folder  ->  Piscis split name (note: "validation" -> "val")
-SPLIT_MAP = {"training": "train", "validation": "val", "test": "test"}
+SPLITS = ("train", "val", "test")
 
-def build_piscis_dataset(canon, dst, split_map):
-    for src_name, dst_name in split_map.items():
-        src = canon / src_name
+def build_piscis_dataset(canon, dst, splits):
+    for split in splits:
+        src = canon / split
         if not src.is_dir():
             print(f"skip: {src} not found")
             continue
 
-        x_dir = dst / dst_name / "x"     # images
-        y_dir = dst / dst_name / "y"     # labels
+        x_dir = dst / split / "x"     # images
+        y_dir = dst / split / "y"     # labels
         x_dir.mkdir(parents=True, exist_ok=True)
         y_dir.mkdir(parents=True, exist_ok=True)
 
@@ -36,7 +35,8 @@ def build_piscis_dataset(canon, dst, split_map):
             coords.to_csv(y_dir / f"{tif.stem}.csv", index=False, header=False)
             n += 1
 
-        print(f"{src_name:12s} -> {dst_name:6s}  ({n} pairs)")
+        print(f"{split:6s}  ({n} pairs)")
 
-build_piscis_dataset(CANON, PISCIS, SPLIT_MAP)
+build_piscis_dataset(CANON, PISCIS, SPLITS)
 print("\nDone. Piscis dataset at:", PISCIS)
+

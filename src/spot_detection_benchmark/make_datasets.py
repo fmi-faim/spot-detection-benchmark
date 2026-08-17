@@ -11,8 +11,8 @@ TEST_SPLIT = 0.3
 SEED = 42
 DRY_RUN = False  # Set to False to actually move files
 
-TRAIN_DIR = SRC_DIR / "training"
-VALIDATION_DIR = SRC_DIR / "validation"
+TRAIN_DIR = SRC_DIR / "train"
+VALIDATION_DIR = SRC_DIR / "val"
 TEST_DIR = SRC_DIR / "test"
 
 # Find the image type depending on the name
