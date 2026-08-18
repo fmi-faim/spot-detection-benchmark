@@ -4,12 +4,12 @@ from pathlib import Path
 from collections import defaultdict, Counter 
 
 # Config 
-INPUT_DIR_IMAGES = Path(r"W:\scratch\gmicro\soucemma\datasets\FISH_spots\2d\image")
-INPUT_DIR_CSV = Path(r"W:\scratch\gmicro\soucemma\datasets\FISH_spots\2d\csv")
-OUTPUT_DIR = Path(r"W:\scratch\gmicro\soucemma\datasets\train_val_test_split")
+INPUT_DIR_IMAGES = Path(r"C:\Data\soucemma\spot-detection-benchmark\datasets\FISH_spots\2d\image")
+INPUT_DIR_CSV = Path(r"C:\Data\soucemma\spot-detection-benchmark\datasets\FISH_spots\2d\csv")
+OUTPUT_DIR = Path(r"C:\Data\soucemma\spot-detection-benchmark\datasets\train_val_test_split")
 IMAGE_EXTS = {".tif", ".tiff"}
-VALIDATION_SPLIT = 0.
-TEST_SPLIT = 0.3
+VALIDATION_SPLIT = 0.15
+TEST_SPLIT = 0.05
 SEED = 42
 DRY_RUN = False  # Set to False to actually copy files
 
