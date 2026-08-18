@@ -4,16 +4,18 @@ from pathlib import Path
 from collections import defaultdict, Counter 
 
 # Config 
-SRC_DIR = Path(r"C:\Data\soucemma\spot-detection-benchmark\datasets\training_test")
+INPUT_DIR_IMAGES = Path(r"W:\scratch\gmicro\soucemma\datasets\FISH_spots\2d\image")
+INPUT_DIR_CSV = Path(r"W:\scratch\gmicro\soucemma\datasets\FISH_spots\2d\csv")
+OUTPUT_DIR = Path(r"W:\scratch\gmicro\soucemma\datasets\train_val_test_split")
 IMAGE_EXTS = {".tif", ".tiff"}
-VALIDATION_SPLIT = 0.3
+VALIDATION_SPLIT = 0.
 TEST_SPLIT = 0.3
 SEED = 42
-DRY_RUN = False  # Set to False to actually move files
+DRY_RUN = False  # Set to False to actually copy files
 
-TRAIN_DIR = SRC_DIR / "train"
-VALIDATION_DIR = SRC_DIR / "val"
-TEST_DIR = SRC_DIR / "test"
+TRAIN_DIR = OUTPUT_DIR / "train"
+VALIDATION_DIR = OUTPUT_DIR / "val"
+TEST_DIR = OUTPUT_DIR / "test"
 
 # Find the image type depending on the name
 def get_type(stem):
@@ -22,10 +24,10 @@ def get_type(stem):
 # Find the label
 def find_labels(stem):
     labels = []
-    exact = SRC_DIR / f"{stem}.csv"
+    exact = INPUT_DIR_CSV / f"{stem}.csv"
     if exact.exists():
         labels.append(exact)
-    labels += sorted(SRC_DIR.glob(f"{stem}_*.csv"))
+    labels += sorted(INPUT_DIR_CSV.glob(f"{stem}_*.csv"))
     return labels
 
 
@@ -35,7 +37,7 @@ VALIDATION_DIR.mkdir(exist_ok=True)
 TEST_DIR.mkdir(exist_ok=True)
 
 # Collect all images and group them by type
-images = [p for p in SRC_DIR.iterdir() if p.suffix.lower() in IMAGE_EXTS]
+images = [p for p in INPUT_DIR_IMAGES.iterdir() if p.suffix.lower() in IMAGE_EXTS]
 by_type = defaultdict(list)
 for img in images:
     img_type = get_type(img.stem)
@@ -69,12 +71,12 @@ for typ in sorted(by_type):
     print(f"{typ:<20}{t:>7}{v:>7}{test:>7}")
 print(f"\nTotal: {len(images)} images   DRY_RUN={DRY_RUN}\n")
 
-# move images and csv files
+# copy images and csv files
 for img, labels, split in plan:
     dest = TRAIN_DIR if split == "training" else VALIDATION_DIR if split == "validation" else TEST_DIR
     print(f"{split:<11}{img.name}  (+{len(labels)} csv)")
     if not DRY_RUN:
-        shutil.move(str(img), str(dest / img.name))
+        shutil.copy2(str(img), str(dest / img.name))
         for lab in labels:
-            shutil.move(str(lab), str(dest / lab.name))
+            shutil.copy2(str(lab), str(dest / lab.name))
 

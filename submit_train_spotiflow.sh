@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --account=dlthings
+#SBATCH --account=faim-dev
 #SBATCH --job-name=train_spotiflow
 #SBATCH --cpus-per-task=8
 #SBATCH --ntasks=1
