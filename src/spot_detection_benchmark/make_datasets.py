@@ -17,9 +17,8 @@ TRAIN_DIR = OUTPUT_DIR / "train"
 VALIDATION_DIR = OUTPUT_DIR / "val"
 TEST_DIR = OUTPUT_DIR / "test"
 
-# Find the image type depending on the name
 def get_type(stem):
-    return stem.split("_")[0]  # Assuming the type is the first part of the filename
+    return stem.split("_")[0] 
 
 # Find the label
 def find_labels(stem):
