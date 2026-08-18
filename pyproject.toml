@@ -27,10 +27,17 @@ deep_jlab = "jupyter lab"
 
 [tool.pixi.environments]
 deepblink = { features = ["deepblink"], no-default-feature = true }
-spotiflow = { features = ["spotiflow"], no-default-feature = true }
 napari = ["napari"]
 ufish = ["ufish"]
 piscis = ["piscis"]
+
+[tool.pixi.environments.spotiflow]
+features = ["spotiflow"]
+no-default-feature = true
+
+[tool.pixi.environments.spotiflow.dependencies]
+tensorboard = ">=2.20.0,<3"
+setuptools = "<81"
 
 [tool.pixi.dependencies]
 git-lfs = ">=3.7.1,<4"
