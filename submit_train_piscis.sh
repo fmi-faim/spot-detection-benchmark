@@ -1,13 +1,13 @@
 #!/bin/bash
 #SBATCH --account=faim-dev
-#SBATCH --job-name=train_spotiflow
+#SBATCH --job-name=train_piscis
 #SBATCH --cpus-per-task=8
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
 #SBATCH --partition=main,several
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
-#SBATCH --time=56:00:00
+#SBATCH --time=45:00:00
 #SBATCH --output=logs/train-%j.out
 #SBATCH --error=logs/train-%j.err
 
