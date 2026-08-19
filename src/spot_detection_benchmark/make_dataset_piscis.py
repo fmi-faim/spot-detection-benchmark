@@ -3,8 +3,8 @@ from pathlib import Path
 import pandas as pd
 
 # --- paths ---
-CANON  = Path(r"C:\Data\soucemma\spot-detection-benchmark\datasets\training_test")
-PISCIS = Path(r"C:\Data\soucemma\spot-detection-benchmark\datasets\training_test\piscis_dataset")
+CANON  = Path(r"C:\Data\soucemma\spot-detection-benchmark\datasets\train_val_test_split")
+PISCIS = Path(r"C:\Data\soucemma\spot-detection-benchmark\datasets\train_val_test_split_piscis")
 
 SPLITS = ("train", "val", "test")
 
