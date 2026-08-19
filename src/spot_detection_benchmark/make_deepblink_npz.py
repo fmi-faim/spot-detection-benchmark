@@ -14,14 +14,13 @@ def load_split(folder):
     return imgs, coords
 
 splits = {
-    'train': load_split(r"C:\Data\soucemma\spot-detection-benchmark\datasets\training_test\training"),
-    'valid': load_split(r"C:\Data\soucemma\spot-detection-benchmark\datasets\training_test\validation"),
-    'test':  load_split(r"C:\Data\soucemma\spot-detection-benchmark\datasets\training_test\validation"),      # or reuse validation / an empty split
+    'train': load_split(r"C:\Data\soucemma\spot-detection-benchmark\datasets\train_val_test_split\train"),
+    'valid': load_split(r"C:\Data\soucemma\spot-detection-benchmark\datasets\train_val_test_split\val"),
+    'test':  load_split(r"C:\Data\soucemma\spot-detection-benchmark\datasets\train_val_test_split\test"),
 }
 
-out_path = r"C:\Data\soucemma\spot-detection-benchmark\datasets\training_test\deepblink_data.npz"
+out_path = r"C:\Data\soucemma\spot-detection-benchmark\datasets\deepblink_dataset.npz"
 
-# build the npz file
 def build_deepblink_npz(out_path, splits):
     """splits = {'train': (imgs, coords), 'valid': (...), 'test': (...)}
        imgs: list of (H,W) arrays, all same square power-of-two size
@@ -44,7 +43,7 @@ build_deepblink_npz(out_path, splits)
 # verify it loads:
 from deepblink.io import load_npz
 
-x_train, y_train, x_valid, y_valid, x_test, y_test = load_npz(out_path) # add x_test, y_test when there will be a test set
+x_train, y_train, x_valid, y_valid, x_test, y_test = load_npz(out_path) 
 
 print("x_train shape:", x_train.shape, "y_train shape:", y_train.shape)
 print("x_valid shape:", x_valid.shape, "y_valid shape:", y_valid.shape)
