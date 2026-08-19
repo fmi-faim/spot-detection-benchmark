@@ -1,3 +1,5 @@
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import argparse
 
 parser = argparse.ArgumentParser(description="Train Piscis model")
@@ -12,9 +14,11 @@ from piscis.training import train_model
 train_model(
     model_name='piscis_customed',
     dataset_path=args.input_dir,
-    input_size=(512, 512),
+    input_size=(256, 256),
     device='cuda',
 )
+
+
 
 
 

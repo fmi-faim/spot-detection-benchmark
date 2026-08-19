@@ -42,16 +42,9 @@ echo "[INFO] Job ID: $SLURM_JOB_ID"
 echo "[INFO] Node: $SLURMD_NODENAME"
 
 INPUT_DIR=$1
-OUTPUT_DIR=$2
 
 echo "[INFO] Starting training job $SLURM_JOB_ID"
 echo "[INFO] Input: $INPUT_DIR"
-echo "[INFO] Output: $OUTPUT_DIR"
-
-# Ensure output directory exists
-if [ -n "$OUTPUT_DIR" ]; then
-    mkdir -p "$OUTPUT_DIR"
-fi
 
 # Run training
 pixi run -e piscis python src/spot_detection_benchmark/train_piscis.py \
