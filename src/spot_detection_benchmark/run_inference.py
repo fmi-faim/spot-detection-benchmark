@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MODELS = {
     "deepblink": REPO_ROOT / "models" / "model_deepblink",
     "spotiflow": REPO_ROOT / "models" / "model_spotiflow",
-    "piscis": "default_model_name",
+    "piscis": "piscis_customed",
     "ufish": REPO_ROOT / "models" / "ufish_model.pth",
 }
 
