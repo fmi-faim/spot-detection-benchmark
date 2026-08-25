@@ -4,8 +4,6 @@ parser = argparse.ArgumentParser(description="Train deepBlink model")
 parser.add_argument("--config", 
                     type=str,
                     help="Path to the configuration YAML file")
-from deepblink.training import run_experiment
-
 args = parser.parse_args()
 
 import yaml
