@@ -21,7 +21,10 @@ def main():
         args.train_dir,
         args.val_dir,
         model_save_dir=args.output_dir,
-    )
+        lr=1e-4,          
+        batch_size=16,    
+        num_epochs=200,   
+)
 
 
 if __name__ == '__main__':

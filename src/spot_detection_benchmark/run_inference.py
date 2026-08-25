@@ -85,7 +85,7 @@ def run_inference(tool, input_dir, output_root, model=None):
         uf = UFish()
         uf.load_weights_from_path(model)
         for tif in images:
-            spots_df = uf.predict(tifffile.imread(tif))
+            spots_df, _ = uf.predict(tifffile.imread(tif))
             spots_df[["axis-0", "axis-1"]].to_csv(output_dir / f"{tif.stem}.csv", index=False)
 
     else:
