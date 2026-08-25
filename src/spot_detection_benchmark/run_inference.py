@@ -12,7 +12,7 @@ DEFAULT_MODELS = {
     "deepblink": REPO_ROOT / "models" / "model_deepblink",
     "spotiflow": REPO_ROOT / "models" / "model_spotiflow",
     "piscis": "piscis_customed",
-    "ufish": REPO_ROOT / "models" / "ufish_model.pth",
+    "ufish": REPO_ROOT / "models" / "model_ufish" / "best_model.pth",
 }
 
 def _save_output_csv(coords, out_csv):
@@ -82,7 +82,7 @@ def run_inference(tool, input_dir, output_root, model=None):
 
     elif tool=="ufish":
         from ufish.api import UFish
-        uf = UFish(device=device)
+        uf = UFish()
         uf.load_weights_from_path(model)
         for tif in images:
             spots_df, _ = uf.predict(tifffile.imread(tif))
