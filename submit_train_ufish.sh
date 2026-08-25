@@ -7,17 +7,17 @@
 #SBATCH --partition=main,several
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
-#SBATCH --time=45:00:00
+#SBATCH --time=56:00:00
 #SBATCH --output=logs/train-%j.out
 #SBATCH --error=logs/train-%j.err
 
-# Piscis Training SLURM Batch Script
+# U-Fish Training SLURM Batch Script
 # Usage:
-# sbatch scripts/submit_train_piscis.sh <input_dir>
+# sbatch scripts/submit_train_ufish.sh <train_dir> <val_dir> <output_dir>
 
 set -eu
 
-if [ $# -lt 1 ]; then
+if [ $# -lt 3 ]; then
     echo "Usage: sbatch scripts/submit_train_ufish.sh <train_dir> <val_dir> <output_dir>"
     exit 1
 fi
