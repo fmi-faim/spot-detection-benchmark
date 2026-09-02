@@ -10,10 +10,7 @@ requires = ["hatchling"]
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]
-platforms = [
-    { platform = "linux-64", cuda = "12" },
-    "win-64",
-]
+platforms = ["linux-64", "win-64"]
 
 [tool.pixi.pypi-dependencies]
 spot_detection_benchmark = { path = ".", editable = true }
@@ -73,6 +70,9 @@ pyqt6 = ">=6.8.1,<7"
 
 [tool.pixi.feature.ufish.dependencies]
 ufish = ">=0.1.1,<0.2"
+
+[tool.pixi.feature.ufish.system-requirements]
+cuda = "12"
 
 [tool.pixi.feature.ufish.target.linux-64.dependencies]
 pytorch-gpu = "*"
