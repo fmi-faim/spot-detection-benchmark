@@ -7,6 +7,7 @@
 #SBATCH --partition=main,several
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
+#SBATCH --exclude=pcl1005.fmi.ch
 #SBATCH --time=45:00:00
 #SBATCH --output=logs/train-%j.out
 #SBATCH --error=logs/train-%j.err
