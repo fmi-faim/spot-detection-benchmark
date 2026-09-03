@@ -101,10 +101,20 @@ def run_inference(tool, input_dir, output_root, model=None):
     elif tool == "ufish":
         from ufish.api import UFish
 
+        UFISH_CHUNK_SIZE = 512
         uf = UFish()
         uf.load_weights_from_path(model)
         for tif in images:
-            spots_df, _ = uf.predict(tifffile.imread(tif))
+            if max(tifffile.imread(tif).shape) > UFISH_CHUNK_SIZE:
+                print(
+                    f"Warning: {tif.name} is larger than {UFISH_CHUNK_SIZE} pixels. "
+                    "UFish will process it in chunks, which may affect performance."
+                )
+                spots_df, _ = uf.predict_chunk(
+                    tifffile.imread(tif), chunk_size=UFISH_CHUNK_SIZE
+                )
+            else:
+                spots_df, _ = uf.predict(tifffile.imread(tif))
             spots_df[["axis-0", "axis-1"]].to_csv(
                 output_dir / f"{tif.stem}.csv", index=False
             )
