@@ -91,8 +91,9 @@ def run_inference_pretrained(tool, input_dir, output_root, model=None):
                     f"Warning: {tif.name} is larger than {UFISH_CHUNK_SIZE} pixels. "
                     "UFish will process it in chunks, which may affect performance."
                 )
-                spots_df, _ = uf.predict_chunk(
-                    tifffile.imread(tif), chunk_size=UFISH_CHUNK_SIZE
+                spots_df, _ = uf.predict_chunks(
+                    tifffile.imread(tif),
+                    chunk_size=(UFISH_CHUNK_SIZE, UFISH_CHUNK_SIZE),
                 )
             else:
                 spots_df, _ = uf.predict(tifffile.imread(tif))
