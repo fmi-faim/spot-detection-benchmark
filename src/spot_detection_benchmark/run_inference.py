@@ -20,6 +20,14 @@ DEFAULT_MODELS = {
     "ufish": REPO_ROOT / "models" / "model_ufish" / "best_model.pth",
 }
 
+# Default detection threshold per tool (used when threshold=None)
+DEFAULT_THRESHOLDS = {
+    "deepblink": 0.5,  # grid-cell probability cutoff
+    "spotiflow": None,  # None → uses model's own stored optimal threshold
+    "piscis": 0.5,  # pooled-label confidence
+    "ufish": 0.5,  # enhanced-image intensity cutoff
+}
+
 
 def _save_output_csv(coords, out_csv):
     """Write (row, col) coords as a napari-ready axis-0,axis-1 CSV."""
@@ -27,7 +35,7 @@ def _save_output_csv(coords, out_csv):
     df.to_csv(out_csv, index=False)
 
 
-def run_inference(tool, input_dir, output_root, model=None):
+def run_inference(tool, input_dir, output_root, model=None, threshold=None):
     """
     Run inference using the specified tool on the input directory and save results to the output directory.
 
@@ -36,11 +44,15 @@ def run_inference(tool, input_dir, output_root, model=None):
         input_dir (str): Path to the directory containing input images.
         output_root (str): Path to the root directory where csv results will be saved.
         model (str): Path to the trained model file.
-        - for deepblink, this is the path to the .h5 model file.
-        - for spotiflow, this is the path to the folder containing the model.
-        - for piscis, this is the name of the pre-trained model.
-        - for ufish, this is the path to the .pth model file.
-        device (str): The device to run inference on ('cpu' (default) or 'cuda').
+            - for deepblink, this is the path to the .h5 model file.
+            - for spotiflow, this is the path to the folder containing the model.
+            - for piscis, this is the name of the pre-trained model.
+            - for ufish, this is the path to the .pth model file.
+        threshold (float, optional): Detection threshold. If None, uses the tool's default.
+            - deepblink: probability cutoff (default: 0.5)
+            - spotiflow: prob_thresh (default: None → model's own stored threshold)
+            - piscis: spot detection threshold (default: 0.5)
+            - ufish: intensity threshold on enhanced image (default: 0.5)
     """
     if sys.platform.startswith("win"):
         device = "cpu"
@@ -52,10 +64,19 @@ def run_inference(tool, input_dir, output_root, model=None):
     else:
         model = Path(model) if tool != "piscis" else model
 
+    # resolve threshold: use provided value or fall back to tool default
+    if threshold is None:
+        threshold = DEFAULT_THRESHOLDS[tool]
+
     input_dir = Path(input_dir)
     output_dir = Path(output_root) / f"results_{tool}"
     output_dir.mkdir(parents=True, exist_ok=True)
     images = sorted(input_dir.glob("*.tif"))
+
+    if not images:
+        raise FileNotFoundError(f"No .tif images found in {input_dir}")
+    print(f"[{tool}] found {len(images)} images -> {output_dir}")
+    print(f"[{tool}] threshold: {threshold}")
 
     if tool == "deepblink":
         from deepblink.inference import predict
@@ -64,7 +85,7 @@ def run_inference(tool, input_dir, output_root, model=None):
         m = load_model(model)
         for tif in images:
             image = tifffile.imread(tif)
-            coords = predict(image=image, model=m)
+            coords = predict(image=image, model=m, probability=threshold)
             _save_output_csv(coords, output_dir / f"{tif.stem}.csv")
 
     elif tool == "spotiflow":
@@ -73,7 +94,8 @@ def run_inference(tool, input_dir, output_root, model=None):
         m = Spotiflow.from_folder(model, map_location=device)
         for tif in images:
             image = tifffile.imread(tif)
-            coords, _ = m.predict(image, device=device)
+            # threshold=None → Spotiflow uses its own stored optimal prob_thresh
+            coords, _ = m.predict(image, device=device, prob_thresh=threshold)
             _save_output_csv(coords, output_dir / f"{tif.stem}.csv")
 
     elif tool == "piscis":
@@ -92,10 +114,10 @@ def run_inference(tool, input_dir, output_root, model=None):
 
         from piscis import Piscis
 
-        m = Piscis(model_name=model, device=device)  # loads models_dir/<model>.pt
+        m = Piscis(model_name=model, device=device)
         for tif in images:
             image = tifffile.imread(tif)
-            coords = m.predict(image)
+            coords = m.predict(image, threshold=threshold)
             _save_output_csv(coords, output_dir / f"{tif.stem}.csv")
 
     elif tool == "ufish":
@@ -113,9 +135,13 @@ def run_inference(tool, input_dir, output_root, model=None):
                 spots_df, _ = uf.predict_chunks(
                     tifffile.imread(tif),
                     chunk_size=(UFISH_CHUNK_SIZE, UFISH_CHUNK_SIZE),
+                    intensity_threshold=threshold,
                 )
             else:
-                spots_df, _ = uf.predict(tifffile.imread(tif))
+                spots_df, _ = uf.predict(
+                    tifffile.imread(tif),
+                    intensity_threshold=threshold,
+                )
             spots_df[["axis-0", "axis-1"]].to_csv(
                 output_dir / f"{tif.stem}.csv", index=False
             )
@@ -152,6 +178,18 @@ if __name__ == "__main__":
         help="Path to the pre-trained model file or folder.",
         required=False,
     )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=None,
+        required=False,
+        help=(
+            "Detection threshold. If omitted, uses each tool's default: "
+            "deepblink=0.5, spotiflow=model default, piscis=0.5, ufish=0.5."
+        ),
+    )
 
     args = parser.parse_args()
-    run_inference(args.tool, args.input_dir, args.output_root, args.model)
+    run_inference(
+        args.tool, args.input_dir, args.output_root, args.model, args.threshold
+    )
