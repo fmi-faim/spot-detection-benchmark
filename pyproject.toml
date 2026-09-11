@@ -70,3 +70,9 @@ pyqt6 = ">=6.8.1,<7"
 
 [tool.pixi.feature.ufish.dependencies]
 ufish = ">=0.1.1,<0.2"
+
+[tool.ruff]
+target-version = "py39"
+
+[tool.ruff.lint]
+ignore = ["UP007"]
