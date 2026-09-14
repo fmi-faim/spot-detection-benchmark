@@ -86,6 +86,9 @@ def run_inference(tool, input_dir, output_root, model=None, threshold=None):
         for tif in images:
             image = tifffile.imread(tif)
             coords = predict(image=image, model=m, probability=threshold)
+            coords = np.asarray(coords)
+            if coords.ndim == 2 and coords.shape[1] > 2:
+                coords = coords[:, :2]  # drop probability column
             _save_output_csv(coords, output_dir / f"{tif.stem}.csv")
 
     elif tool == "spotiflow":

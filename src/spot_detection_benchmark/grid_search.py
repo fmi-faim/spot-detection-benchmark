@@ -19,7 +19,7 @@ MIN_TRUE = 1
 THRESHOLD_GRIDS = {
     "deepblink": np.round(np.arange(0.1, 1.0, 0.05), 3).tolist(),
     "spotiflow": np.round(np.arange(0.1, 1.0, 0.05), 3).tolist(),
-    "piscis": np.round(np.arange(0.1, 9.0, 0.5), 3).tolist(),
+    "piscis": np.round(np.arange(0.1, 1, 0.05), 3).tolist(),
     "ufish": np.round(np.arange(0.1, 1.0, 0.05), 3).tolist(),
 }
 
