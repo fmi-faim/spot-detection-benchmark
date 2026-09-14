@@ -1,10 +1,16 @@
-from typing import List, Optional, Tuple, Union
 import warnings
+from typing import List, Optional, Tuple, Union
+
 import numpy as np
 import pandas as pd
 import scipy.optimize
+import scipy.spatial.distance
 
 EPS = 1e-12
+
+# NumPy 2.0 renamed trapz -> trapezoid; support both versions
+_trapz = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
+
 
 def euclidean_dist(x1: float, y1: float, x2: float, y2: float) -> float:
     """Return the euclidean distance between two the points (x1, y1) and (x2, y2)."""
@@ -177,7 +183,7 @@ def f1_integral(
 
     if not return_raw:
         f1_scores = [_f1_at_cutoff(matrix, pred, true, cutoff) for cutoff in cutoffs]
-        return np.trapezoid(f1_scores, cutoffs) / mdist  # Norm. to 0-1
+        return _trapz(f1_scores, cutoffs) / mdist  # Norm. to 0-1
 
     f1_scores = []
     offsets = []
@@ -277,7 +283,9 @@ def compute_metrics(
             * f1_integral: Area under curve f1_score vs. cutoffs.
             * mean_euclidean: Normalized average euclidean distance based on the total number of assignments.
     """
-    f1_scores, offsets, cutoffs = f1_integral(pred, true, mdist=mdist, n_cutoffs=50, return_raw=True)  # type: ignore
+    f1_scores, offsets, cutoffs = f1_integral(
+        pred, true, mdist=mdist, n_cutoffs=50, return_raw=True
+    )  # type: ignore
 
     abs_euclideans = []
     total_euclidean = 0
@@ -300,10 +308,10 @@ def compute_metrics(
             "offset": offsets,
         }
     )
-    df["f1_integral"] = np.trapezoid(df["f1_score"], cutoffs) / mdist  # Norm. to 0-1
+    df["f1_integral"] = _trapz(df["f1_score"], cutoffs) / mdist  # Norm. to 0-1
     df["mean_euclidean"] = total_euclidean / (total_assignments + 1e-10)
 
     return df
 
-# Results
 
+# Results
