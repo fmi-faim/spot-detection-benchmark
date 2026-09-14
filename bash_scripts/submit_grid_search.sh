@@ -13,12 +13,14 @@
 
 # Grid Search SLURM Batch Script
 # Usage:
-# sbatch scripts/submit_grid_search.sh <tool> <val_dir> <gt_dir> <output_root> [<model_path>]
+# sbatch scripts/submit_grid_search.sh <tool> <val_dir> <gt_dir> <output_root> [<model_path>] [<pretrained>]
+#   <model_path>  optional, "" to use the tool default
+#   <pretrained>  optional, pass "pretrained" to sweep the tool's pretrained model
 
 set -eu
 
 if [ $# -lt 4 ]; then
-    echo "Usage: sbatch scripts/submit_grid_search.sh <tool> <val_dir> <gt_dir> <output_root> [<model_path>]"
+    echo "Usage: sbatch scripts/submit_grid_search.sh <tool> <val_dir> <gt_dir> <output_root> [<model_path>] [<pretrained>]"
     exit 1
 fi
 
@@ -41,6 +43,14 @@ VAL_DIR=$2
 GT_DIR=$3
 OUTPUT_ROOT=$4
 MODEL_PATH=${5:-""}
+PRETRAINED=${6:-""}
+
+# grid_search.py tags its outputs with _pretrained in pretrained mode
+if [ -n "$PRETRAINED" ]; then
+    TAG="${TOOL}_pretrained"
+else
+    TAG="$TOOL"
+fi
 
 echo "[INFO] Job ID: $SLURM_JOB_ID"
 echo "[INFO] Node: $SLURMD_NODENAME"
@@ -50,6 +60,7 @@ echo "[INFO] Validation data: $VAL_DIR"
 echo "[INFO] Ground truth: $GT_DIR"
 echo "[INFO] Output root: $OUTPUT_ROOT"
 echo "[INFO] Model: ${MODEL_PATH:-<tool default>}"
+echo "[INFO] Pretrained: ${PRETRAINED:-no}"
 
 mkdir -p "$OUTPUT_ROOT"
 
@@ -66,8 +77,12 @@ if [ -n "$MODEL_PATH" ]; then
     COMMAND+=(--model "$MODEL_PATH")
 fi
 
+if [ -n "$PRETRAINED" ]; then
+    COMMAND+=(--pretrained)
+fi
+
 "${COMMAND[@]}"
 
 echo "[INFO] Grid search complete"
-echo "[INFO] Sweep CSV: $OUTPUT_ROOT/$TOOL/${TOOL}_threshold_sweep.csv"
-echo "[INFO] Optimal threshold: $OUTPUT_ROOT/$TOOL/${TOOL}_optimal_threshold.txt"
+echo "[INFO] Sweep CSV: $OUTPUT_ROOT/$TAG/${TAG}_threshold_sweep.csv"
+echo "[INFO] Optimal threshold: $OUTPUT_ROOT/$TAG/${TAG}_optimal_threshold.txt"
