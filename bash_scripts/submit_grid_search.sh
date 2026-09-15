@@ -84,5 +84,14 @@ fi
 "${COMMAND[@]}"
 
 echo "[INFO] Grid search complete"
-echo "[INFO] Sweep CSV: $OUTPUT_ROOT/$TAG/${TAG}_threshold_sweep.csv"
-echo "[INFO] Optimal threshold: $OUTPUT_ROOT/$TAG/${TAG}_optimal_threshold.txt"
+if [ "$TOOL" = "ufish" ]; then
+    VARIANTS=("$TAG" "${TOOL}_chunk${PRETRAINED:+_pretrained}")
+else
+    VARIANTS=("$TAG")
+fi
+for v in "${VARIANTS[@]}"; do
+    echo "[INFO] $v"
+    echo "[INFO]   sweep CSV:         $OUTPUT_ROOT/$v/${v}_threshold_sweep.csv"
+    echo "[INFO]   optimal per type:  $OUTPUT_ROOT/$v/${v}_optimal_thresholds.csv"
+    echo "[INFO]   predictions:       $OUTPUT_ROOT/$v/optimal/"
+done
