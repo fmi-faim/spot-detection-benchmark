@@ -17,26 +17,25 @@ MIN_TRUE = 1
 THRESHOLD_GRIDS = {
     "deepblink": np.round(np.arange(0.1, 1.0, 0.05), 3).tolist(),
     "spotiflow": np.round(np.arange(0.1, 1.0, 0.05), 3).tolist(),
-    "piscis": np.round(np.arange(0.1, 1, 0.05), 3).tolist(),
+    "piscis": np.round(np.arange(0.1, 1.0, 0.05), 3).tolist(),
     "ufish": np.round(np.arange(0.1, 1.0, 0.05), 3).tolist(),
 }
 
-# column order of the sweep CSV (one row per threshold x image type)
+# column order of the sweep CSV (one row per threshold x image)
 COLUMNS = [
     "threshold",
     "subset",
-    "n_images",
-    "TP_total",
-    "FP_total",
-    "FN_total",
-    "total_gt_spots",
-    "total_pred_spots",
-    "precision_mean",
-    "recall_mean",
-    "f1_mean",
-    "f1_integral_mean",
-    "f1_integral_std",
-    "distance_error_mean",
+    "image",
+    "TP",
+    "FP",
+    "FN",
+    "n_true",
+    "n_pred",
+    "precision",
+    "recall",
+    "f1",
+    "f1_integral",
+    "distance_error",
 ]
 
 
@@ -109,41 +108,26 @@ def score_folder(pred_dir, gt_dir):
     return pd.DataFrame(rows)
 
 
-def aggregate(df):
-    """Collapse per-image rows into a single summary row.
+def mean_f1_integral(df):
+    """Mean F1-integral over images that have at least MIN_TRUE ground-truth spots.
 
-    Means exclude empty-GT images (MIN_TRUE); counts use every image.
+    Used only to pick the optimal threshold; the CSV keeps the raw per-image values.
     """
     scored = df[df["n_true"] >= MIN_TRUE]
-    return pd.Series(
-        {
-            "n_images": len(df),
-            "TP_total": int(df["TP"].sum()),
-            "FP_total": int(df["FP"].sum()),
-            "FN_total": int(df["FN"].sum()),
-            "total_gt_spots": int(df["n_true"].sum()),
-            "total_pred_spots": int(df["n_pred"].sum()),
-            "precision_mean": scored["precision"].mean(),
-            "recall_mean": scored["recall"].mean(),
-            "f1_mean": scored["f1"].mean(),
-            "f1_integral_mean": scored["f1_integral"].mean(),
-            "f1_integral_std": scored["f1_integral"].std(),
-            "distance_error_mean": scored["distance_error"].mean(),
-        }
-    )
+    return scored["f1_integral"].mean() if len(scored) else np.nan
 
 
 def grid_search(tool, val_dir, gt_dir, output_root, model, pretrained=False):
-    """Sweep the detection threshold on the validation set, per image type.
+    """Sweep the detection threshold on the validation set.
 
     Produces two outputs:
-      1. a sweep CSV with one row per (threshold, image type), holding the
-         aggregated metrics for that combination;
+      1. a sweep CSV with one row per (threshold, image), holding that image's raw
+         metrics - so distributions, not just means, are available downstream;
       2. a predictions folder holding, for every image, the prediction made at
          the optimal threshold *for that image's type*.
 
-    Whole-dataset metrics can be recomputed from the sweep CSV: the count columns
-    are sums, and the mean columns can be recombined with n_images as weights.
+    Any aggregation (per image type, whole dataset, medians, quantiles, box plots)
+    can be derived from output 1 with a groupby.
 
     Args:
         tool (str): Tool to sweep.
@@ -155,7 +139,7 @@ def grid_search(tool, val_dir, gt_dir, output_root, model, pretrained=False):
             trained in this project.
 
     Returns:
-        (best_thresholds_by_subset, sweep_dataframe), or (None, None) if nothing scored.
+        (best_thresholds_by_subset, per_image_dataframe), or (None, None) if nothing scored.
     """
     val_dir = Path(val_dir).resolve()
     gt_dir = Path(gt_dir).resolve()
@@ -204,18 +188,17 @@ def grid_search(tool, val_dir, gt_dir, output_root, model, pretrained=False):
             print("no scored images")
             continue
 
-        # one aggregated row per image type
-        by_subset = df.groupby("subset").apply(aggregate).reset_index()
-        by_subset.insert(0, "threshold", thr)
-        sweep_rows.append(by_subset)
+        # keep every image's raw metrics
+        df.insert(0, "threshold", thr)
+        sweep_rows.append(df)
 
-        overall = aggregate(df)
+        scored = df[df["n_true"] >= MIN_TRUE]
         print(
-            f"F1-integral={overall['f1_integral_mean']:.4f}  "
-            f"F1={overall['f1_mean']:.4f}  "
-            f"P={overall['precision_mean']:.4f}  "
-            f"R={overall['recall_mean']:.4f}  "
-            f"({by_subset['subset'].nunique()} types)"
+            f"F1-integral={scored['f1_integral'].mean():.4f}  "
+            f"F1={scored['f1'].mean():.4f}  "
+            f"P={scored['precision'].mean():.4f}  "
+            f"R={scored['recall'].mean():.4f}  "
+            f"({len(df)} images, {df['subset'].nunique()} types)"
         )
 
     # scratch folder is no longer needed
@@ -226,27 +209,48 @@ def grid_search(tool, val_dir, gt_dir, output_root, model, pretrained=False):
         print(f"[{tag}] no valid results - check errors above")
         return None, None
 
-    # ---------- output 1: sweep CSV, one row per (threshold, image type) ----------
+    # ---------- output 1: sweep CSV, one row per (threshold, image) ----------
     sweep = pd.concat(sweep_rows, ignore_index=True)
-    sweep = sweep[COLUMNS].sort_values(["subset", "threshold"])
+    sweep = sweep[COLUMNS].sort_values(["subset", "threshold", "image"])
     sweep_csv = tool_out / f"{tag}_threshold_sweep.csv"
     sweep.to_csv(sweep_csv, index=False)
     print(f"\n[{tag}] sweep saved to {sweep_csv}")
     print(
-        f"[{tag}] {sweep['subset'].nunique()} image types x "
-        f"{sweep['threshold'].nunique()} thresholds = {len(sweep)} rows"
+        f"[{tag}] {sweep['image'].nunique()} images x "
+        f"{sweep['threshold'].nunique()} thresholds = {len(sweep)} rows "
+        f"({sweep['subset'].nunique()} image types)"
     )
 
     # ---------- optimal threshold per image type ----------
-    best_idx = sweep.groupby("subset")["f1_integral_mean"].idxmax()
-    best = sweep.loc[best_idx, ["subset", "threshold", "f1_integral_mean",
-                                "precision_mean", "recall_mean"]]
-    best = best.rename(columns={"threshold": "optimal_threshold"})
+    scored = sweep[sweep["n_true"] >= MIN_TRUE]
+    by_subset_thr = (
+        scored.groupby(["subset", "threshold"])
+        .agg(
+            f1_integral_mean=("f1_integral", "mean"),
+            precision_mean=("precision", "mean"),
+            recall_mean=("recall", "mean"),
+            n_images=("image", "nunique"),
+        )
+        .reset_index()
+    )
+    best_idx = by_subset_thr.groupby("subset")["f1_integral_mean"].idxmax()
+    best = by_subset_thr.loc[
+        best_idx,
+        [
+            "subset",
+            "threshold",
+            "f1_integral_mean",
+            "precision_mean",
+            "recall_mean",
+            "n_images",
+        ],
+    ].rename(columns={"threshold": "optimal_threshold"})
+
     best_csv = tool_out / f"{tag}_optimal_thresholds.csv"
     best.to_csv(best_csv, index=False)
 
     print(f"\n[{tag}] optimal threshold per image type:")
-    print(best.to_string(index=False))
+    print(best.round(4).to_string(index=False))
     print(f"[{tag}] saved to {best_csv}")
 
     best_by_subset = dict(zip(best["subset"], best["optimal_threshold"]))
@@ -295,8 +299,11 @@ def grid_search(tool, val_dir, gt_dir, output_root, model, pretrained=False):
     # record which threshold produced each image, for traceability
     provenance = pd.DataFrame(
         [
-            {"image": p.stem, "subset": p.stem.split("_")[0],
-             "threshold": best_by_subset.get(p.stem.split("_")[0], np.nan)}
+            {
+                "image": p.stem,
+                "subset": p.stem.split("_")[0],
+                "threshold": best_by_subset.get(p.stem.split("_")[0], np.nan),
+            }
             for p in sorted(final_dir.glob("*.csv"))
         ]
     )
