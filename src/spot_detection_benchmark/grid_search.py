@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import scipy.spatial
 from evaluation_metrics import EPS, f1_integral, linear_sum_assignment, offset_euclidean
-from run_inference import run_inference
+from run_inference import _results_dirname, run_inference
 
 CUTOFF = 3.0
 MDIST = 3.0
@@ -37,6 +37,24 @@ COLUMNS = [
     "f1_integral",
     "distance_error",
 ]
+
+
+def variants(tool, pretrained=False):
+    """Prediction variants a single run_inference call produces for this tool.
+
+    ufish is run in two modes - whole-image and chunked - so one inference pass
+    fills two folders and both are swept for the price of one.
+
+    Returns:
+        list of (variant_tag, results_subdir_name)
+    """
+    modes = [False, True] if tool == "ufish" else [False]
+    out = []
+    for chunked in modes:
+        name = f"{tool}_chunk" if chunked else tool
+        tag = f"{name}_pretrained" if pretrained else name
+        out.append((tag, _results_dirname(tool, pretrained, chunked)))
+    return out
 
 
 def _load(csv):
@@ -108,26 +126,45 @@ def score_folder(pred_dir, gt_dir):
     return pd.DataFrame(rows)
 
 
-def mean_f1_integral(df):
-    """Mean F1-integral over images that have at least MIN_TRUE ground-truth spots.
-
-    Used only to pick the optimal threshold; the CSV keeps the raw per-image values.
-    """
-    scored = df[df["n_true"] >= MIN_TRUE]
-    return scored["f1_integral"].mean() if len(scored) else np.nan
+def optimal_per_subset(sweep):
+    """Threshold maximising mean F1-integral, for each image type."""
+    scored = sweep[sweep["n_true"] >= MIN_TRUE]
+    by_subset_thr = (
+        scored.groupby(["subset", "threshold"])
+        .agg(
+            f1_integral_mean=("f1_integral", "mean"),
+            precision_mean=("precision", "mean"),
+            recall_mean=("recall", "mean"),
+            n_images=("image", "nunique"),
+        )
+        .reset_index()
+    )
+    best_idx = by_subset_thr.groupby("subset")["f1_integral_mean"].idxmax()
+    return by_subset_thr.loc[
+        best_idx,
+        [
+            "subset",
+            "threshold",
+            "f1_integral_mean",
+            "precision_mean",
+            "recall_mean",
+            "n_images",
+        ],
+    ].rename(columns={"threshold": "optimal_threshold"})
 
 
 def grid_search(tool, val_dir, gt_dir, output_root, model, pretrained=False):
     """Sweep the detection threshold on the validation set.
 
-    Produces two outputs:
+    For every prediction variant the tool produces (ufish yields two - whole-image
+    and chunked - every other tool yields one), writes:
       1. a sweep CSV with one row per (threshold, image), holding that image's raw
-         metrics - so distributions, not just means, are available downstream;
+         metrics, so distributions and not just means are available downstream;
       2. a predictions folder holding, for every image, the prediction made at
          the optimal threshold *for that image's type*.
 
-    Any aggregation (per image type, whole dataset, medians, quantiles, box plots)
-    can be derived from output 1 with a groupby.
+    Both ufish variants come out of the same inference pass, so sweeping them
+    together costs no extra inference.
 
     Args:
         tool (str): Tool to sweep.
@@ -139,28 +176,26 @@ def grid_search(tool, val_dir, gt_dir, output_root, model, pretrained=False):
             trained in this project.
 
     Returns:
-        (best_thresholds_by_subset, per_image_dataframe), or (None, None) if nothing scored.
+        dict mapping variant tag -> (best_thresholds_by_subset, per_image_dataframe),
+        or an empty dict if nothing scored.
     """
     val_dir = Path(val_dir).resolve()
     gt_dir = Path(gt_dir).resolve()
     output_root = Path(output_root).resolve()
 
-    # run_inference writes into <output_root>/results_<tool>[_pretrained]
-    results_subdir = f"results_{tool}_pretrained" if pretrained else f"results_{tool}"
-    tag = f"{tool}_pretrained" if pretrained else tool
-
-    tool_out = output_root / tag
-    tool_out.mkdir(parents=True, exist_ok=True)
+    var = variants(tool, pretrained)
+    base_tag = f"{tool}_pretrained" if pretrained else tool
 
     # scratch folder, reused and wiped for every threshold
-    tmp_dir = tool_out / "_tmp_predictions"
+    tmp_dir = output_root / f"_tmp_{base_tag}"
 
     thresholds = THRESHOLD_GRIDS[tool]
-    sweep_rows = []
+    sweep_rows = {tag: [] for tag, _ in var}
 
     print(
-        f"[{tag}] sweeping {len(thresholds)} thresholds: "
-        f"{thresholds[0]} -> {thresholds[-1]}"
+        f"[{base_tag}] sweeping {len(thresholds)} thresholds "
+        f"({thresholds[0]} -> {thresholds[-1]}) "
+        f"over {len(var)} variant(s): {[t for t, _ in var]}"
     )
 
     for thr in thresholds:
@@ -178,102 +213,87 @@ def grid_search(tool, val_dir, gt_dir, output_root, model, pretrained=False):
             print(f"FAILED: {e}")
             continue
 
-        pred_dir = tmp_dir / results_subdir
-        if not pred_dir.exists():
-            print("no output dir")
-            continue
+        msgs = []
+        for tag, subdir in var:
+            pred_dir = tmp_dir / subdir
+            if not pred_dir.exists():
+                msgs.append(f"{tag}: no output dir")
+                continue
 
-        df = score_folder(pred_dir, gt_dir)
-        if df.empty:
-            print("no scored images")
-            continue
+            df = score_folder(pred_dir, gt_dir)
+            if df.empty:
+                msgs.append(f"{tag}: no scored images")
+                continue
 
-        # keep every image's raw metrics
-        df.insert(0, "threshold", thr)
-        sweep_rows.append(df)
+            df.insert(0, "threshold", thr)
+            sweep_rows[tag].append(df)
 
-        scored = df[df["n_true"] >= MIN_TRUE]
-        print(
-            f"F1-integral={scored['f1_integral'].mean():.4f}  "
-            f"F1={scored['f1'].mean():.4f}  "
-            f"P={scored['precision'].mean():.4f}  "
-            f"R={scored['recall'].mean():.4f}  "
-            f"({len(df)} images, {df['subset'].nunique()} types)"
-        )
+            scored = df[df["n_true"] >= MIN_TRUE]
+            msgs.append(
+                f"{tag}: F1i={scored['f1_integral'].mean():.4f} "
+                f"P={scored['precision'].mean():.4f} "
+                f"R={scored['recall'].mean():.4f}"
+            )
+        print(" | ".join(msgs))
 
-    # scratch folder is no longer needed
     if tmp_dir.exists():
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    if not sweep_rows:
-        print(f"[{tag}] no valid results - check errors above")
-        return None, None
+    # ---------- per variant: sweep CSV + optimal thresholds ----------
+    results = {}
+    for tag, subdir in var:
+        if not sweep_rows[tag]:
+            print(f"\n[{tag}] no valid results - check errors above")
+            continue
 
-    # ---------- output 1: sweep CSV, one row per (threshold, image) ----------
-    sweep = pd.concat(sweep_rows, ignore_index=True)
-    sweep = sweep[COLUMNS].sort_values(["subset", "threshold", "image"])
-    sweep_csv = tool_out / f"{tag}_threshold_sweep.csv"
-    sweep.to_csv(sweep_csv, index=False)
-    print(f"\n[{tag}] sweep saved to {sweep_csv}")
-    print(
-        f"[{tag}] {sweep['image'].nunique()} images x "
-        f"{sweep['threshold'].nunique()} thresholds = {len(sweep)} rows "
-        f"({sweep['subset'].nunique()} image types)"
-    )
+        tool_out = output_root / tag
+        tool_out.mkdir(parents=True, exist_ok=True)
 
-    # ---------- optimal threshold per image type ----------
-    scored = sweep[sweep["n_true"] >= MIN_TRUE]
-    by_subset_thr = (
-        scored.groupby(["subset", "threshold"])
-        .agg(
-            f1_integral_mean=("f1_integral", "mean"),
-            precision_mean=("precision", "mean"),
-            recall_mean=("recall", "mean"),
-            n_images=("image", "nunique"),
+        sweep = pd.concat(sweep_rows[tag], ignore_index=True)
+        sweep = sweep[COLUMNS].sort_values(["subset", "threshold", "image"])
+        sweep_csv = tool_out / f"{tag}_threshold_sweep.csv"
+        sweep.to_csv(sweep_csv, index=False)
+        print(f"\n[{tag}] sweep saved to {sweep_csv}")
+        print(
+            f"[{tag}] {sweep['image'].nunique()} images x "
+            f"{sweep['threshold'].nunique()} thresholds = {len(sweep)} rows "
+            f"({sweep['subset'].nunique()} image types)"
         )
-        .reset_index()
+
+        best = optimal_per_subset(sweep)
+        best_csv = tool_out / f"{tag}_optimal_thresholds.csv"
+        best.to_csv(best_csv, index=False)
+        print(f"[{tag}] optimal threshold per image type:")
+        print(best.round(4).to_string(index=False))
+
+        results[tag] = (dict(zip(best["subset"], best["optimal_threshold"])), sweep)
+
+    if not results:
+        return {}
+
+    # ---------- predictions at each type's optimal threshold ----------
+    # every threshold any variant needs; one inference pass serves all of them
+    needed = sorted(
+        {thr for best_by_subset, _ in results.values() for thr in best_by_subset.values()}
     )
-    best_idx = by_subset_thr.groupby("subset")["f1_integral_mean"].idxmax()
-    best = by_subset_thr.loc[
-        best_idx,
-        [
-            "subset",
-            "threshold",
-            "f1_integral_mean",
-            "precision_mean",
-            "recall_mean",
-            "n_images",
-        ],
-    ].rename(columns={"threshold": "optimal_threshold"})
 
-    best_csv = tool_out / f"{tag}_optimal_thresholds.csv"
-    best.to_csv(best_csv, index=False)
-
-    print(f"\n[{tag}] optimal threshold per image type:")
-    print(best.round(4).to_string(index=False))
-    print(f"[{tag}] saved to {best_csv}")
-
-    best_by_subset = dict(zip(best["subset"], best["optimal_threshold"]))
-
-    # ---------- output 2: predictions at each type's optimal threshold ----------
-    optimal_out = tool_out / "optimal"
-    if optimal_out.exists():
-        shutil.rmtree(optimal_out, ignore_errors=True)
-    final_dir = optimal_out / results_subdir
-    final_dir.mkdir(parents=True, exist_ok=True)
-
-    # group image types that share the same optimal threshold: one inference each
-    subsets_by_threshold = {}
-    for subset, thr in best_by_subset.items():
-        subsets_by_threshold.setdefault(thr, []).append(subset)
+    final_dirs = {}
+    for tag, subdir in var:
+        if tag not in results:
+            continue
+        optimal_out = output_root / tag / "optimal"
+        if optimal_out.exists():
+            shutil.rmtree(optimal_out, ignore_errors=True)
+        final_dirs[tag] = optimal_out / subdir
+        final_dirs[tag].mkdir(parents=True, exist_ok=True)
 
     print(
-        f"\n[{tag}] rebuilding predictions at {len(subsets_by_threshold)} "
-        f"distinct optimal threshold(s) -> {final_dir}"
+        f"\n[{base_tag}] rebuilding predictions at {len(needed)} distinct "
+        f"optimal threshold(s): {needed}"
     )
 
-    for thr, subsets in sorted(subsets_by_threshold.items()):
-        print(f"  threshold={thr} for {subsets} ...", end=" ", flush=True)
+    for thr in needed:
+        print(f"  threshold={thr} ...", end=" ", flush=True)
 
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -285,36 +305,50 @@ def grid_search(tool, val_dir, gt_dir, output_root, model, pretrained=False):
             print(f"FAILED: {e}")
             continue
 
-        # keep only the CSVs belonging to the image types this threshold is best for
-        n_copied = 0
-        for pcsv in sorted((tmp_dir / results_subdir).glob("*.csv")):
-            if pcsv.stem.split("_")[0] in subsets:
-                shutil.copy2(pcsv, final_dir / pcsv.name)
-                n_copied += 1
-        print(f"kept {n_copied} CSVs")
+        msgs = []
+        for tag, subdir in var:
+            if tag not in results:
+                continue
+            best_by_subset, _ = results[tag]
+            # image types for which THIS threshold is the optimum, for THIS variant
+            wanted = {s for s, t in best_by_subset.items() if t == thr}
+            if not wanted:
+                continue
+            n_copied = 0
+            for pcsv in sorted((tmp_dir / subdir).glob("*.csv")):
+                if pcsv.stem.split("_")[0] in wanted:
+                    shutil.copy2(pcsv, final_dirs[tag] / pcsv.name)
+                    n_copied += 1
+            msgs.append(f"{tag}: {n_copied} CSVs for {sorted(wanted)}")
+        print(" | ".join(msgs) if msgs else "nothing to keep")
 
     if tmp_dir.exists():
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    # record which threshold produced each image, for traceability
-    provenance = pd.DataFrame(
-        [
-            {
-                "image": p.stem,
-                "subset": p.stem.split("_")[0],
-                "threshold": best_by_subset.get(p.stem.split("_")[0], np.nan),
-            }
-            for p in sorted(final_dir.glob("*.csv"))
-        ]
-    )
-    provenance.to_csv(optimal_out / f"{tag}_threshold_per_image.csv", index=False)
+    # ---------- traceability: which threshold produced each image ----------
+    for tag, _ in var:
+        if tag not in results:
+            continue
+        best_by_subset, _ = results[tag]
+        provenance = pd.DataFrame(
+            [
+                {
+                    "image": p.stem,
+                    "subset": p.stem.split("_")[0],
+                    "threshold": best_by_subset.get(p.stem.split("_")[0], np.nan),
+                }
+                for p in sorted(final_dirs[tag].glob("*.csv"))
+            ]
+        )
+        provenance.to_csv(
+            output_root / tag / "optimal" / f"{tag}_threshold_per_image.csv", index=False
+        )
+        print(
+            f"[{tag}] {len(provenance)} predictions saved to {final_dirs[tag]} "
+            f"(threshold per image recorded alongside)"
+        )
 
-    print(
-        f"[{tag}] {len(provenance)} predictions saved to {final_dir} "
-        f"(threshold per image recorded in {tag}_threshold_per_image.csv)"
-    )
-
-    return best_by_subset, sweep
+    return results
 
 
 if __name__ == "__main__":

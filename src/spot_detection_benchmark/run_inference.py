@@ -43,6 +43,16 @@ def _save_output_csv(coords, out_csv):
     df.to_csv(out_csv, index=False)
 
 
+def _results_dirname(tool, pretrained=False, chunked=False):
+    """Folder name run_inference writes into, for one tool and mode.
+
+    ufish is run twice - whole-image and chunked - so it gets two folders:
+    results_ufish / results_ufish_chunk (plus _pretrained where applicable).
+    """
+    name = f"results_{tool}_chunk" if (tool == "ufish" and chunked) else f"results_{tool}"
+    return f"{name}_pretrained" if pretrained else name
+
+
 def run_inference(
     tool, input_dir, output_root, model=None, threshold=None, pretrained=False
 ):
@@ -71,6 +81,11 @@ def run_inference(
             - ufish: intensity threshold on enhanced image (default: 0.5)
         pretrained (bool): If True, use the tool's pretrained model instead of the one
             trained in this project. Results go to results_<tool>_pretrained.
+
+    Note:
+        ufish is run in BOTH prediction modes so the two can be compared:
+        predict() on the whole image -> results_ufish
+        predict_chunks() on a 512x512 grid -> results_ufish_chunk
     """
     if sys.platform.startswith("win"):
         device = "cpu"
@@ -85,9 +100,8 @@ def run_inference(
     if threshold is None:
         threshold = DEFAULT_THRESHOLDS[tool]
 
-    out = f"results_{tool}_pretrained" if pretrained else f"results_{tool}"
     input_dir = Path(input_dir)
-    output_dir = Path(output_root) / out
+    output_dir = Path(output_root) / _results_dirname(tool, pretrained)
     output_dir.mkdir(parents=True, exist_ok=True)
     images = sorted(input_dir.glob("*.tif"))
 
@@ -149,6 +163,11 @@ def run_inference(
     elif tool == "ufish":
         from ufish.api import UFish
 
+        # second output folder for the chunked predictions
+        chunk_dir = Path(output_root) / _results_dirname(tool, pretrained, chunked=True)
+        chunk_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[{tool}] chunked predictions -> {chunk_dir}")
+
         uf = UFish()
         if pretrained:
             uf.load_weights_from_internet()
@@ -157,20 +176,21 @@ def run_inference(
 
         for tif in images:
             image = tifffile.imread(tif)
-            if max(image.shape) > UFISH_CHUNK_SIZE:
-                print(
-                    f"Warning: {tif.name} is larger than {UFISH_CHUNK_SIZE} pixels. "
-                    "UFish will process it in chunks, which may affect performance."
-                )
-                spots_df, _ = uf.predict_chunks(
-                    image,
-                    chunk_size=(UFISH_CHUNK_SIZE, UFISH_CHUNK_SIZE),
-                    intensity_threshold=threshold,
-                )
-            else:
-                spots_df, _ = uf.predict(image, intensity_threshold=threshold)
+
+            # mode 1: whole image in a single pass
+            spots_df, _ = uf.predict(image, intensity_threshold=threshold)
             spots_df[["axis-0", "axis-1"]].to_csv(
                 output_dir / f"{tif.stem}.csv", index=False
+            )
+
+            # mode 2: 512x512 chunks, stitched back together
+            chunk_df, _ = uf.predict_chunks(
+                image,
+                chunk_size=(UFISH_CHUNK_SIZE, UFISH_CHUNK_SIZE),
+                intensity_threshold=threshold,
+            )
+            chunk_df[["axis-0", "axis-1"]].to_csv(
+                chunk_dir / f"{tif.stem}.csv", index=False
             )
 
     else:
