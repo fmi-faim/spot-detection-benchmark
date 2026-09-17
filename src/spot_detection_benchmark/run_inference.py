@@ -125,7 +125,7 @@ def run_inference(
                 coords[:, :2] if coords.ndim == 2 and coords.shape[1] > 2 else coords,
                 output_dir / f"{tif.stem}.csv",
                 scores=probs,
-                score_colname="probability",
+                scores_colname="probability",
             )
 
     elif tool == "spotiflow":
@@ -138,7 +138,7 @@ def run_inference(
             _save_output_csv(
                 coords,
                 output_dir / f"{tif.stem}.csv",
-                score=getattr(details, "prob", None),
+                scores=getattr(details, "prob", None),
                 scores_colname="probability",
             )
 
@@ -178,7 +178,7 @@ def run_inference(
                 coords,
                 output_dir / f"{tif.stem}.csv",
                 scores=scores,
-                score_name="confidence",
+                scores_colname="confidence",
             )
 
     elif tool == "ufish":
@@ -220,7 +220,7 @@ def run_inference(
                 coords,
                 output_dir / f"{tif.stem}.csv",
                 scores=intens,
-                score_name="intensity",
+                scores_colname="intensity",
             )
 
             # mode 2: 512x512 chunks
@@ -242,7 +242,7 @@ def run_inference(
                     chunk_coords,
                     chunk_dir / f"{tif.stem}.csv",
                     scores=chunk_intens,
-                    score_name="intensity",
+                    scores_colname="intensity",
                 )
 
     else:
