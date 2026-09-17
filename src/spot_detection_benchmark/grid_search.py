@@ -17,7 +17,7 @@ MIN_TRUE = 1
 THRESHOLD_GRIDS = {
     "deepblink": np.round(np.arange(0.1, 1.0, 0.05), 3).tolist(),
     "spotiflow": np.round(np.arange(0.1, 1.0, 0.05), 3).tolist(),
-    "piscis": np.round(np.arange(0.1, 1.0, 0.05), 3).tolist(),
+    "piscis": np.round(np.arange(0.1, 1.2, 0.05), 3).tolist(),
     "ufish": np.round(np.arange(0.1, 1.0, 0.05), 3).tolist(),
 }
 
@@ -274,7 +274,11 @@ def grid_search(tool, val_dir, gt_dir, output_root, model, pretrained=False):
     # ---------- predictions at each type's optimal threshold ----------
     # every threshold any variant needs; one inference pass serves all of them
     needed = sorted(
-        {thr for best_by_subset, _ in results.values() for thr in best_by_subset.values()}
+        {
+            thr
+            for best_by_subset, _ in results.values()
+            for thr in best_by_subset.values()
+        }
     )
 
     final_dirs = {}
@@ -341,7 +345,8 @@ def grid_search(tool, val_dir, gt_dir, output_root, model, pretrained=False):
             ]
         )
         provenance.to_csv(
-            output_root / tag / "optimal" / f"{tag}_threshold_per_image.csv", index=False
+            output_root / tag / "optimal" / f"{tag}_threshold_per_image.csv",
+            index=False,
         )
         print(
             f"[{tag}] {len(provenance)} predictions saved to {final_dirs[tag]} "

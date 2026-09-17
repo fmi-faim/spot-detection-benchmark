@@ -1,6 +1,7 @@
 import os
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+import argparse
 import sys
 from pathlib import Path
 
@@ -15,18 +16,18 @@ UFISH_CHUNK_SIZE = 512
 DEFAULT_MODELS = {
     "deepblink": REPO_ROOT
     / "models"
-    / "model_deepblink"
+    / "models_deepblink"
     / "260827_095918_deepBlink_is_sweet.h5",
-    "spotiflow": REPO_ROOT / "models" / "model_spotiflow",
+    "spotiflow": REPO_ROOT / "models" / "models_spotiflow" / "spotiflow_customed",
     "piscis": "piscis_customed",
-    "ufish": REPO_ROOT / "models" / "model_ufish" / "best_model.pth",
+    "ufish": REPO_ROOT / "models" / "models_ufish" / "best_model.pth",
 }
 
 DEFAULT_PRETRAINED_MODELS = {
-    "deepblink": REPO_ROOT / "models" / "model_deepblink" / "smfish1.h5",
-    "spotiflow": "general",
-    "piscis": None,
-    "ufish": None,
+    "deepblink": REPO_ROOT / "models" / "models_deepblink" / "smfish1.h5",
+    "spotiflow": REPO_ROOT / "models" / "models_spotiflow" / "general",
+    "piscis": "20251212",
+    "ufish": REPO_ROOT / "models" / "models_ufish" / "v1.0-alldata-ufish_c32.onnx",
 }
 
 DEFAULT_THRESHOLDS = {
@@ -37,19 +38,23 @@ DEFAULT_THRESHOLDS = {
 }
 
 
-def _save_output_csv(coords, out_csv):
-    """Write (row, col) coords as a napari-ready axis-0,axis-1 CSV."""
+def _save_output_csv(coords, out_csv, scores=None, scores_colname="score"):
+    """Write (row, col) coords as a axis-0,axis-1 CSV for napari, and a third column for probability/intensity if available."""
     df = pd.DataFrame(np.asarray(coords).reshape(-1, 2), columns=["axis-0", "axis-1"])
+    if scores is not None:
+        df[scores_colname] = np.asarray(scores).reshape(-1)
     df.to_csv(out_csv, index=False)
 
 
 def _results_dirname(tool, pretrained=False, chunked=False):
     """Folder name run_inference writes into, for one tool and mode.
 
-    ufish is run twice - whole-image and chunked - so it gets two folders:
+    ufish inference is run twice: whole-image and chunked. So, it gets two folders:
     results_ufish / results_ufish_chunk (plus _pretrained where applicable).
     """
-    name = f"results_{tool}_chunk" if (tool == "ufish" and chunked) else f"results_{tool}"
+    name = (
+        f"results_{tool}_chunk" if (tool == "ufish" and chunked) else f"results_{tool}"
+    )
     return f"{name}_pretrained" if pretrained else name
 
 
@@ -71,21 +76,17 @@ def run_inference(
             - ufish: path to the .pth model file.
             Pretrained mode (pretrained=True):
             - deepblink: path to a downloaded .h5 model file (default: smfish1.h5).
-            - spotiflow: pretrained model name (default: "general").
-            - piscis: model name (default: package default).
-            - ufish: ignored, weights are downloaded from the internet.
+            - spotiflow: path to the folder containing the pretrained model (default: "general").
+            - piscis: pretrained model name (default: "20251212").
+            - ufish: path to the pretrained .onnx model file (default: "v1.0-alldata-ufish_c32.onnx").
         threshold (float, optional): Detection threshold. If None, uses the tool's default.
             - deepblink: probability cutoff (default: 0.5)
-            - spotiflow: prob_thresh (default: None -> model's own stored threshold)
+            - spotiflow: prob_thresh (default: None, uses model's own stored threshold)
             - piscis: spot detection threshold (default: 0.5)
             - ufish: intensity threshold on enhanced image (default: 0.5)
         pretrained (bool): If True, use the tool's pretrained model instead of the one
-            trained in this project. Results go to results_<tool>_pretrained.
+            trained on the UFISH dataset. Results go to results_<tool>_pretrained.
 
-    Note:
-        ufish is run in BOTH prediction modes so the two can be compared:
-        predict() on the whole image -> results_ufish
-        predict_chunks() on a 512x512 grid -> results_ufish_chunk
     """
     if sys.platform.startswith("win"):
         device = "cpu"
@@ -95,7 +96,7 @@ def run_inference(
     defaults = DEFAULT_PRETRAINED_MODELS if pretrained else DEFAULT_MODELS
     if model is None:
         model = defaults[tool]
-    elif tool != "piscis" and not pretrained:
+    elif tool != "piscis":
         model = Path(model)
     if threshold is None:
         threshold = DEFAULT_THRESHOLDS[tool]
@@ -118,80 +119,131 @@ def run_inference(
         m = load_model(str(model))
         for tif in images:
             image = tifffile.imread(tif)
-            coords = predict(image=image, model=m, probability=threshold)
-            # remove the probability column if present, and ensure coords is 2D
-            coords = np.asarray(coords)
-            if coords.ndim == 2 and coords.shape[1] > 2:
-                coords = coords[:, :2]
-            _save_output_csv(coords, output_dir / f"{tif.stem}.csv")
+            coords = np.asarray(predict(image=image, model=m, probability=threshold))
+            probs = coords[:, 2] if coords.ndim == 2 and coords.shape[1] > 2 else None
+            _save_output_csv(
+                coords[:, :2] if coords.ndim == 2 and coords.shape[1] > 2 else coords,
+                output_dir / f"{tif.stem}.csv",
+                scores=probs,
+                score_colname="probability",
+            )
 
     elif tool == "spotiflow":
         from spotiflow.model import Spotiflow
 
-        m = (
-            Spotiflow.from_pretrained(model)
-            if pretrained
-            else Spotiflow.from_folder(model, map_location=device)
-        )
+        m = Spotiflow.from_folder(model, map_location=device)
         for tif in images:
             image = tifffile.imread(tif)
-            coords, _ = m.predict(image, device=device, prob_thresh=threshold)
-            _save_output_csv(coords, output_dir / f"{tif.stem}.csv")
+            coords, details = m.predict(image, device=device, prob_thresh=threshold)
+            _save_output_csv(
+                coords,
+                output_dir / f"{tif.stem}.csv",
+                score=getattr(details, "prob", None),
+                scores_colname="probability",
+            )
 
     elif tool == "piscis":
-        if not pretrained:
-            import piscis.core
-            import piscis.paths
+        import piscis.core
+        import piscis.paths
 
-            models_dir = Path(
-                os.environ.get(
-                    "PISCIS_MODELS_DIR", REPO_ROOT / "models" / ".piscis" / "models"
-                )
+        models_dir = Path(
+            os.environ.get(
+                "PISCIS_MODELS_DIR", REPO_ROOT / "models" / ".piscis" / "models"
             )
-            models_dir.mkdir(parents=True, exist_ok=True)
-            piscis.paths.MODELS_DIR = models_dir
-            piscis.core.MODELS_DIR = models_dir
+        )
+        models_dir.mkdir(parents=True, exist_ok=True)
+        piscis.paths.MODELS_DIR = models_dir
+        piscis.core.MODELS_DIR = models_dir
 
         from piscis import Piscis
 
-        m = Piscis(model_name=model, device=device) if model else Piscis(device=device)
+        m = Piscis(model_name=model, device=device)
         for tif in images:
             image = tifffile.imread(tif)
-            coords = m.predict(image, threshold=threshold)
-            _save_output_csv(coords, output_dir / f"{tif.stem}.csv")
+            coords, maps = m.predict(image, threshold=threshold, intermediates=True)
+            coords = np.asarray(coords).reshape(-1, 2)
+            try:
+                labels = np.asarray(maps)
+                labels = labels[0] if labels.ndim == 3 else labels
+                row_idx = np.clip(
+                    coords[:, 0].round().astype(int), 0, labels.shape[0] - 1
+                )
+                col_idx = np.clip(
+                    coords[:, 1].round().astype(int), 0, labels.shape[1] - 1
+                )
+                scores = labels[row_idx, col_idx] if len(coords) else np.array([])
+            except Exception:
+                scores = None
+            _save_output_csv(
+                coords,
+                output_dir / f"{tif.stem}.csv",
+                scores=scores,
+                score_name="confidence",
+            )
 
     elif tool == "ufish":
         from ufish.api import UFish
 
-        # second output folder for the chunked predictions
-        chunk_dir = Path(output_root) / _results_dirname(tool, pretrained, chunked=True)
-        chunk_dir.mkdir(parents=True, exist_ok=True)
-        print(f"[{tool}] chunked predictions -> {chunk_dir}")
+        img_shape = tifffile.TiffFile(images[0]).pages[0].shape[-2:]
+        needs_chunking = max(img_shape) > UFISH_CHUNK_SIZE
+
+        chunk_dir = None
+        if needs_chunking:
+            chunk_dir = Path(output_root) / _results_dirname(
+                tool, pretrained, chunked=True
+            )
+            chunk_dir.mkdir(parents=True, exist_ok=True)
+            print(
+                f"[{tool}] images are {img_shape[0]}x{img_shape[1]}: "
+                f"chunked predictions -> {chunk_dir}"
+            )
+        else:
+            print(
+                f"[{tool}] images are {img_shape[0]}x{img_shape[1]}: chunking skipped"
+            )
 
         uf = UFish()
-        if pretrained:
-            uf.load_weights_from_internet()
-        else:
-            uf.load_weights_from_path(model)
+        uf.load_weights_from_path(str(model))
 
         for tif in images:
             image = tifffile.imread(tif)
 
-            # mode 1: whole image in a single pass
-            spots_df, _ = uf.predict(image, intensity_threshold=threshold)
-            spots_df[["axis-0", "axis-1"]].to_csv(
-                output_dir / f"{tif.stem}.csv", index=False
+            # mode 1: whole image
+            spots_df, enhanced = uf.predict(image, intensity_threshold=threshold)
+            coords = spots_df[["axis-0", "axis-1"]].to_numpy()
+            intens = (
+                enhanced[coords[:, 0].astype(int), coords[:, 1].astype(int)]
+                if len(coords)
+                else np.array([])
+            )
+            _save_output_csv(
+                coords,
+                output_dir / f"{tif.stem}.csv",
+                scores=intens,
+                score_name="intensity",
             )
 
-            # mode 2: 512x512 chunks, stitched back together
-            chunk_df, _ = uf.predict_chunks(
-                image,
-                chunk_size=(UFISH_CHUNK_SIZE, UFISH_CHUNK_SIZE),
-                intensity_threshold=threshold,
-            )
-            chunk_df[["axis-0", "axis-1"]].to_csv(
-                chunk_dir / f"{tif.stem}.csv", index=False
-            )
+            # mode 2: 512x512 chunks
+            if chunk_dir is not None:
+                chunk_df, chunk_enhanced = uf.predict_chunks(
+                    image,
+                    chunk_size=(UFISH_CHUNK_SIZE, UFISH_CHUNK_SIZE),
+                    intensity_threshold=threshold,
+                )
+                chunk_coords = chunk_df[["axis-0", "axis-1"]].to_numpy()
+                chunk_intens = (
+                    chunk_enhanced[
+                        chunk_coords[:, 0].astype(int), chunk_coords[:, 1].astype(int)
+                    ]
+                    if len(chunk_coords)
+                    else np.array([])
+                )
+                _save_output_csv(
+                    chunk_coords,
+                    chunk_dir / f"{tif.stem}.csv",
+                    scores=chunk_intens,
+                    score_name="intensity",
+                )
 
     else:
         raise ValueError(
@@ -200,8 +252,6 @@ def run_inference(
 
 
 if __name__ == "__main__":
-    import argparse
-
     parser = argparse.ArgumentParser(
         description="Run inference using a specified tool on input images."
     )

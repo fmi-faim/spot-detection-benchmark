@@ -27,8 +27,7 @@ fi
 # Activate environment
 WD="$(pwd)"
 export PATH="$PATH:$WD/infrastructure/apps/pixi/bin"
-export PIXI_CACHE_DIR="/tachyon/scratch/gmicro/soucemma/pixi-cache"
-export UV_CACHE_DIR="/tachyon/scratch/gmicro/soucemma/uv-cache"
+export PIXI_CACHE_DIR="$WD/infrastructure/apps/pixi/.pixi_cache"
 export TMPDIR="$WD/infrastructure/.tmp_$USER"
 mkdir -p "$TMPDIR"
 
