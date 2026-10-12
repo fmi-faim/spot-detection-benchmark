@@ -19,6 +19,9 @@ THRESHOLD_GRIDS = {
     "spotiflow": np.round(np.arange(0.1, 1.0, 0.05), 3).tolist(),
     "piscis": np.round(np.arange(0.1, 1.2, 0.05), 3).tolist(),
     "ufish": np.round(np.arange(0.1, 1.0, 0.05), 3).tolist(),
+    # h-maxima height in grey levels: log-spaced integers covering both the
+    # uint8 and uint16 image types (the optimum is picked per image type)
+    "log": np.unique(np.geomspace(1, 3000, 30).astype(int)).tolist(),
 }
 
 # column order of the sweep CSV (one row per threshold x image)
@@ -37,24 +40,6 @@ COLUMNS = [
     "f1_integral",
     "distance_error",
 ]
-
-
-def variants(tool, pretrained=False):
-    """Prediction variants a single run_inference call produces for this tool.
-
-    ufish is run in two modes - whole-image and chunked - so one inference pass
-    fills two folders and both are swept for the price of one.
-
-    Returns:
-        list of (variant_tag, results_subdir_name)
-    """
-    modes = [False, True] if tool == "ufish" else [False]
-    out = []
-    for chunked in modes:
-        name = f"{tool}_chunk" if chunked else tool
-        tag = f"{name}_pretrained" if pretrained else name
-        out.append((tag, _results_dirname(tool, pretrained, chunked)))
-    return out
 
 
 def _load(csv):
@@ -156,15 +141,11 @@ def optimal_per_subset(sweep):
 def grid_search(tool, val_dir, gt_dir, output_root, model, pretrained=False):
     """Sweep the detection threshold on the validation set.
 
-    For every prediction variant the tool produces (ufish yields two - whole-image
-    and chunked - every other tool yields one), writes:
+    Writes:
       1. a sweep CSV with one row per (threshold, image), holding that image's raw
          metrics, so distributions and not just means are available downstream;
       2. a predictions folder holding, for every image, the prediction made at
          the optimal threshold *for that image's type*.
-
-    Both ufish variants come out of the same inference pass, so sweeping them
-    together costs no extra inference.
 
     Args:
         tool (str): Tool to sweep.
@@ -176,26 +157,24 @@ def grid_search(tool, val_dir, gt_dir, output_root, model, pretrained=False):
             trained in this project.
 
     Returns:
-        dict mapping variant tag -> (best_thresholds_by_subset, per_image_dataframe),
-        or an empty dict if nothing scored.
+        (best_thresholds_by_subset, per_image_dataframe), or None if nothing scored.
     """
     val_dir = Path(val_dir).resolve()
     gt_dir = Path(gt_dir).resolve()
     output_root = Path(output_root).resolve()
 
-    var = variants(tool, pretrained)
-    base_tag = f"{tool}_pretrained" if pretrained else tool
+    tag = f"{tool}_pretrained" if pretrained else tool
+    subdir = _results_dirname(tool, pretrained)
 
     # scratch folder, reused and wiped for every threshold
-    tmp_dir = output_root / f"_tmp_{base_tag}"
+    tmp_dir = output_root / f"_tmp_{tag}"
 
     thresholds = THRESHOLD_GRIDS[tool]
-    sweep_rows = {tag: [] for tag, _ in var}
+    sweep_rows = []
 
     print(
-        f"[{base_tag}] sweeping {len(thresholds)} thresholds "
-        f"({thresholds[0]} -> {thresholds[-1]}) "
-        f"over {len(var)} variant(s): {[t for t, _ in var]}"
+        f"[{tag}] sweeping {len(thresholds)} thresholds "
+        f"({thresholds[0]} -> {thresholds[-1]})"
     )
 
     for thr in thresholds:
@@ -213,86 +192,67 @@ def grid_search(tool, val_dir, gt_dir, output_root, model, pretrained=False):
             print(f"FAILED: {e}")
             continue
 
-        msgs = []
-        for tag, subdir in var:
-            pred_dir = tmp_dir / subdir
-            if not pred_dir.exists():
-                msgs.append(f"{tag}: no output dir")
-                continue
+        pred_dir = tmp_dir / subdir
+        if not pred_dir.exists():
+            print("no output dir")
+            continue
 
-            df = score_folder(pred_dir, gt_dir)
-            if df.empty:
-                msgs.append(f"{tag}: no scored images")
-                continue
+        df = score_folder(pred_dir, gt_dir)
+        if df.empty:
+            print("no scored images")
+            continue
 
-            df.insert(0, "threshold", thr)
-            sweep_rows[tag].append(df)
+        df.insert(0, "threshold", thr)
+        sweep_rows.append(df)
 
-            scored = df[df["n_true"] >= MIN_TRUE]
-            msgs.append(
-                f"{tag}: F1i={scored['f1_integral'].mean():.4f} "
-                f"P={scored['precision'].mean():.4f} "
-                f"R={scored['recall'].mean():.4f}"
-            )
-        print(" | ".join(msgs))
+        scored = df[df["n_true"] >= MIN_TRUE]
+        print(
+            f"F1i={scored['f1_integral'].mean():.4f} "
+            f"P={scored['precision'].mean():.4f} "
+            f"R={scored['recall'].mean():.4f}"
+        )
 
     if tmp_dir.exists():
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    # ---------- per variant: sweep CSV + optimal thresholds ----------
-    results = {}
-    for tag, subdir in var:
-        if not sweep_rows[tag]:
-            print(f"\n[{tag}] no valid results - check errors above")
-            continue
+    # ---------- sweep CSV + optimal thresholds ----------
+    if not sweep_rows:
+        print(f"\n[{tag}] no valid results - check errors above")
+        return None
 
-        tool_out = output_root / tag
-        tool_out.mkdir(parents=True, exist_ok=True)
+    tool_out = output_root / tag
+    tool_out.mkdir(parents=True, exist_ok=True)
 
-        sweep = pd.concat(sweep_rows[tag], ignore_index=True)
-        sweep = sweep[COLUMNS].sort_values(["subset", "threshold", "image"])
-        sweep_csv = tool_out / f"{tag}_threshold_sweep.csv"
-        sweep.to_csv(sweep_csv, index=False)
-        print(f"\n[{tag}] sweep saved to {sweep_csv}")
-        print(
-            f"[{tag}] {sweep['image'].nunique()} images x "
-            f"{sweep['threshold'].nunique()} thresholds = {len(sweep)} rows "
-            f"({sweep['subset'].nunique()} image types)"
-        )
-
-        best = optimal_per_subset(sweep)
-        best_csv = tool_out / f"{tag}_optimal_thresholds.csv"
-        best.to_csv(best_csv, index=False)
-        print(f"[{tag}] optimal threshold per image type:")
-        print(best.round(4).to_string(index=False))
-
-        results[tag] = (dict(zip(best["subset"], best["optimal_threshold"])), sweep)
-
-    if not results:
-        return {}
-
-    # ---------- predictions at each type's optimal threshold ----------
-    # every threshold any variant needs; one inference pass serves all of them
-    needed = sorted(
-        {
-            thr
-            for best_by_subset, _ in results.values()
-            for thr in best_by_subset.values()
-        }
+    sweep = pd.concat(sweep_rows, ignore_index=True)
+    sweep = sweep[COLUMNS].sort_values(["subset", "threshold", "image"])
+    sweep_csv = tool_out / f"{tag}_threshold_sweep.csv"
+    sweep.to_csv(sweep_csv, index=False)
+    print(f"\n[{tag}] sweep saved to {sweep_csv}")
+    print(
+        f"[{tag}] {sweep['image'].nunique()} images x "
+        f"{sweep['threshold'].nunique()} thresholds = {len(sweep)} rows "
+        f"({sweep['subset'].nunique()} image types)"
     )
 
-    final_dirs = {}
-    for tag, subdir in var:
-        if tag not in results:
-            continue
-        optimal_out = output_root / tag / "optimal"
-        if optimal_out.exists():
-            shutil.rmtree(optimal_out, ignore_errors=True)
-        final_dirs[tag] = optimal_out / subdir
-        final_dirs[tag].mkdir(parents=True, exist_ok=True)
+    best = optimal_per_subset(sweep)
+    best_csv = tool_out / f"{tag}_optimal_thresholds.csv"
+    best.to_csv(best_csv, index=False)
+    print(f"[{tag}] optimal threshold per image type:")
+    print(best.round(4).to_string(index=False))
+
+    best_by_subset = dict(zip(best["subset"], best["optimal_threshold"]))
+
+    # ---------- predictions at each type's optimal threshold ----------
+    needed = sorted(set(best_by_subset.values()))
+
+    optimal_out = tool_out / "optimal"
+    if optimal_out.exists():
+        shutil.rmtree(optimal_out, ignore_errors=True)
+    final_dir = optimal_out / subdir
+    final_dir.mkdir(parents=True, exist_ok=True)
 
     print(
-        f"\n[{base_tag}] rebuilding predictions at {len(needed)} distinct "
+        f"\n[{tag}] rebuilding predictions at {len(needed)} distinct "
         f"optimal threshold(s): {needed}"
     )
 
@@ -309,51 +269,36 @@ def grid_search(tool, val_dir, gt_dir, output_root, model, pretrained=False):
             print(f"FAILED: {e}")
             continue
 
-        msgs = []
-        for tag, subdir in var:
-            if tag not in results:
-                continue
-            best_by_subset, _ = results[tag]
-            # image types for which THIS threshold is the optimum, for THIS variant
-            wanted = {s for s, t in best_by_subset.items() if t == thr}
-            if not wanted:
-                continue
-            n_copied = 0
-            for pcsv in sorted((tmp_dir / subdir).glob("*.csv")):
-                if pcsv.stem.split("_")[0] in wanted:
-                    shutil.copy2(pcsv, final_dirs[tag] / pcsv.name)
-                    n_copied += 1
-            msgs.append(f"{tag}: {n_copied} CSVs for {sorted(wanted)}")
-        print(" | ".join(msgs) if msgs else "nothing to keep")
+        # image types for which THIS threshold is the optimum
+        wanted = {s for s, t in best_by_subset.items() if t == thr}
+        n_copied = 0
+        for pcsv in sorted((tmp_dir / subdir).glob("*.csv")):
+            if pcsv.stem.split("_")[0] in wanted:
+                shutil.copy2(pcsv, final_dir / pcsv.name)
+                n_copied += 1
+        print(f"{n_copied} CSVs for {sorted(wanted)}")
 
     if tmp_dir.exists():
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     # ---------- traceability: which threshold produced each image ----------
-    for tag, _ in var:
-        if tag not in results:
-            continue
-        best_by_subset, _ = results[tag]
-        provenance = pd.DataFrame(
-            [
-                {
-                    "image": p.stem,
-                    "subset": p.stem.split("_")[0],
-                    "threshold": best_by_subset.get(p.stem.split("_")[0], np.nan),
-                }
-                for p in sorted(final_dirs[tag].glob("*.csv"))
-            ]
-        )
-        provenance.to_csv(
-            output_root / tag / "optimal" / f"{tag}_threshold_per_image.csv",
-            index=False,
-        )
-        print(
-            f"[{tag}] {len(provenance)} predictions saved to {final_dirs[tag]} "
-            f"(threshold per image recorded alongside)"
-        )
+    provenance = pd.DataFrame(
+        [
+            {
+                "image": p.stem,
+                "subset": p.stem.split("_")[0],
+                "threshold": best_by_subset.get(p.stem.split("_")[0], np.nan),
+            }
+            for p in sorted(final_dir.glob("*.csv"))
+        ]
+    )
+    provenance.to_csv(optimal_out / f"{tag}_threshold_per_image.csv", index=False)
+    print(
+        f"[{tag}] {len(provenance)} predictions saved to {final_dir} "
+        f"(threshold per image recorded alongside)"
+    )
 
-    return results
+    return best_by_subset, sweep
 
 
 if __name__ == "__main__":
@@ -361,7 +306,9 @@ if __name__ == "__main__":
         description="Grid search over detection thresholds on the validation set."
     )
     parser.add_argument(
-        "--tool", required=True, choices=["deepblink", "spotiflow", "piscis", "ufish"]
+        "--tool",
+        required=True,
+        choices=["deepblink", "spotiflow", "piscis", "ufish", "log"],
     )
     parser.add_argument("--val_dir", required=True, help="Validation images folder")
     parser.add_argument("--gt_dir", required=True, help="Ground-truth CSVs folder")

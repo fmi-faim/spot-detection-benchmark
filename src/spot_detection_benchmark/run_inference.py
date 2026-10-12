@@ -11,7 +11,8 @@ import tifffile
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-UFISH_CHUNK_SIZE = 512
+# LoG spot size in pixels (no optics metadata to derive it from wavelength/NA)
+LOG_LATERAL_SIGMA = 1.5
 
 DEFAULT_MODELS = {
     "deepblink": REPO_ROOT
@@ -21,6 +22,7 @@ DEFAULT_MODELS = {
     "spotiflow": REPO_ROOT / "models" / "models_spotiflow" / "spotiflow_customed",
     "piscis": "piscis_customed",
     "ufish": REPO_ROOT / "models" / "models_ufish" / "best_model.pth",
+    "log": None,  # classical method, no model
 }
 
 DEFAULT_PRETRAINED_MODELS = {
@@ -28,6 +30,7 @@ DEFAULT_PRETRAINED_MODELS = {
     "spotiflow": REPO_ROOT / "models" / "models_spotiflow" / "general",
     "piscis": "20251212",
     "ufish": REPO_ROOT / "models" / "models_ufish" / "v1.0-alldata-ufish_c32.onnx",
+    "log": None,
 }
 
 DEFAULT_THRESHOLDS = {
@@ -35,6 +38,7 @@ DEFAULT_THRESHOLDS = {
     "spotiflow": None,
     "piscis": 0.5,
     "ufish": 0.5,
+    "log": 20,
 }
 
 
@@ -46,15 +50,9 @@ def _save_output_csv(coords, out_csv, scores=None, scores_colname="score"):
     df.to_csv(out_csv, index=False)
 
 
-def _results_dirname(tool, pretrained=False, chunked=False):
-    """Folder name run_inference writes into, for one tool and mode.
-
-    ufish inference is run twice: whole-image and chunked. So, it gets two folders:
-    results_ufish / results_ufish_chunk (plus _pretrained where applicable).
-    """
-    name = (
-        f"results_{tool}_chunk" if (tool == "ufish" and chunked) else f"results_{tool}"
-    )
+def _results_dirname(tool, pretrained=False):
+    """Folder name run_inference writes into, for one tool and mode."""
+    name = f"results_{tool}"
     return f"{name}_pretrained" if pretrained else name
 
 
@@ -79,11 +77,14 @@ def run_inference(
             - spotiflow: path to the folder containing the pretrained model (default: "general").
             - piscis: pretrained model name (default: "20251212").
             - ufish: path to the pretrained .onnx model file (default: "v1.0-alldata-ufish_c32.onnx").
+            Both modes:
+            - log: unused (classical method, no model).
         threshold (float, optional): Detection threshold. If None, uses the tool's default.
             - deepblink: probability cutoff (default: 0.5)
             - spotiflow: prob_thresh (default: None, uses model's own stored threshold)
             - piscis: spot detection threshold (default: 0.5)
             - ufish: intensity threshold on enhanced image (default: 0.5)
+            - log: h-maxima height, in grey levels of the image dtype (default: 20)
         pretrained (bool): If True, use the tool's pretrained model instead of the one
             trained on the UFISH dataset. Results go to results_<tool>_pretrained.
 
@@ -184,31 +185,11 @@ def run_inference(
     elif tool == "ufish":
         from ufish.api import UFish
 
-        img_shape = tifffile.TiffFile(images[0]).pages[0].shape[-2:]
-        needs_chunking = max(img_shape) > UFISH_CHUNK_SIZE
-
-        chunk_dir = None
-        if needs_chunking:
-            chunk_dir = Path(output_root) / _results_dirname(
-                tool, pretrained, chunked=True
-            )
-            chunk_dir.mkdir(parents=True, exist_ok=True)
-            print(
-                f"[{tool}] images are {img_shape[0]}x{img_shape[1]}: "
-                f"chunked predictions -> {chunk_dir}"
-            )
-        else:
-            print(
-                f"[{tool}] images are {img_shape[0]}x{img_shape[1]}: chunking skipped"
-            )
-
         uf = UFish()
         uf.load_weights_from_path(str(model))
 
         for tif in images:
             image = tifffile.imread(tif)
-
-            # mode 1: whole image
             spots_df, enhanced = uf.predict(image, intensity_threshold=threshold)
             coords = spots_df[["axis-0", "axis-1"]].to_numpy()
             intens = (
@@ -223,31 +204,20 @@ def run_inference(
                 scores_colname="intensity",
             )
 
-            # mode 2: 512x512 chunks
-            if chunk_dir is not None:
-                chunk_df, chunk_enhanced = uf.predict_chunks(
-                    image,
-                    chunk_size=(UFISH_CHUNK_SIZE, UFISH_CHUNK_SIZE),
-                    intensity_threshold=threshold,
-                )
-                chunk_coords = chunk_df[["axis-0", "axis-1"]].to_numpy()
-                chunk_intens = (
-                    chunk_enhanced[
-                        chunk_coords[:, 0].astype(int), chunk_coords[:, 1].astype(int)
-                    ]
-                    if len(chunk_coords)
-                    else np.array([])
-                )
-                _save_output_csv(
-                    chunk_coords,
-                    chunk_dir / f"{tif.stem}.csv",
-                    scores=chunk_intens,
-                    scores_colname="intensity",
-                )
+    elif tool == "log":
+        from log_detection import detect_spots_2d
+
+        for tif in images:
+            image = tifffile.imread(tif)
+            # h is in grey levels of the image dtype (uint8 or uint16 here):
+            # clip it to the dtype range, a larger value would overflow
+            h = min(int(round(threshold)), np.iinfo(image.dtype).max)
+            coords = detect_spots_2d(image, lateral_sigma=LOG_LATERAL_SIGMA, h=h)
+            _save_output_csv(coords, output_dir / f"{tif.stem}.csv")
 
     else:
         raise ValueError(
-            f"unknown tool: {tool}. Please choose from 'deepblink', 'spotiflow', 'piscis', or 'ufish'."
+            f"unknown tool: {tool}. Please choose from 'deepblink', 'spotiflow', 'piscis', 'ufish', or 'log'."
         )
 
 
@@ -258,7 +228,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--tool",
         type=str,
-        choices=["deepblink", "spotiflow", "piscis", "ufish"],
+        choices=["deepblink", "spotiflow", "piscis", "ufish", "log"],
         help="The name of the tool to use for inference.",
     )
     parser.add_argument(
@@ -282,7 +252,8 @@ if __name__ == "__main__":
         required=False,
         help=(
             "Detection threshold. If omitted, uses each tool's default: "
-            "deepblink=0.5, spotiflow=model default, piscis=0.5, ufish=0.5."
+            "deepblink=0.5, spotiflow=model default, piscis=0.5, ufish=0.5, "
+            "log=20 (h-maxima height in grey levels)."
         ),
     )
     parser.add_argument(
