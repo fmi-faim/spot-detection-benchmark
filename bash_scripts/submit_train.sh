@@ -13,20 +13,20 @@
 
 # Training SLURM Batch Script
 # Usage:
-# sbatch scripts/submit_train.sh <tool> [train.py arguments...]
+# sbatch bash_scripts/submit_train.sh <tool> [train.py arguments...]
 #
 # Examples:
-#   sbatch --mem=128G scripts/submit_train.sh deepblink --config <config_file>
-#   sbatch scripts/submit_train.sh spotiflow --input_dir <input_dir> --output_dir <output_dir>
-#   sbatch scripts/submit_train.sh piscis --input_dir <input_dir>
-#   sbatch scripts/submit_train.sh ufish --input_dir <train_dir> --val_dir <val_dir> --output_dir <output_dir>
+#   sbatch --mem=128G bash_scripts/submit_train.sh deepblink --config <config_file>
+#   sbatch bash_scripts/submit_train.sh spotiflow --input_dir <input_dir> --output_dir <output_dir>
+#   sbatch bash_scripts/submit_train.sh piscis --input_dir <input_dir>
+#   sbatch bash_scripts/submit_train.sh ufish --input_dir <train_dir> --val_dir <val_dir> --output_dir <output_dir>
 #
 # Optional for every tool: --epochs, --lr, --batch_size (tool default if omitted)
 
 set -eu
 
 if [ $# -lt 1 ]; then
-    echo "Usage: sbatch scripts/submit_train.sh <tool> [train.py arguments...]"
+    echo "Usage: sbatch bash_scripts/submit_train.sh <tool> [train.py arguments...]"
     exit 1
 fi
 
@@ -40,7 +40,7 @@ mkdir -p "$TMPDIR"
 PIXIBIN="$WD/infrastructure/apps/pixi/bin/pixi"
 if [[ ! -x "$PIXIBIN" ]]; then
     echo "[INFO] Pixi binary not found; running install.sh"
-    bash "$WD/install.sh"
+    bash "$WD/bash_scripts/install.sh"
 fi
 
 TOOL=$1
@@ -58,7 +58,7 @@ echo "[INFO] Node: $SLURMD_NODENAME"
 echo "[INFO] Starting training job $SLURM_JOB_ID"
 echo "[INFO] Tool: $TOOL (pixi environment: $PIXI_ENV)"
 echo "[INFO] Arguments: $*"
-
+ssh
 # Run training in the tool's own environment
 pixi run -e "$PIXI_ENV" python src/spot_detection_benchmark/train.py \
     --tool "$TOOL" \

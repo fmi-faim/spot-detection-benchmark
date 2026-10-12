@@ -13,14 +13,14 @@
 
 # Grid Search SLURM Batch Script
 # Usage:
-# sbatch scripts/submit_grid_search.sh <tool> <val_dir> <gt_dir> <output_root> [<model_path>] [<pretrained>]
+# sbatch bash_scripts/submit_grid_search.sh <tool> <val_dir> <gt_dir> <output_root> [<model_path>] [<pretrained>]
 #   <model_path>  optional, "" to use the tool default
 #   <pretrained>  optional, pass "pretrained" to sweep the tool's pretrained model
 
 set -eu
 
 if [ $# -lt 4 ]; then
-    echo "Usage: sbatch scripts/submit_grid_search.sh <tool> <val_dir> <gt_dir> <output_root> [<model_path>] [<pretrained>]"
+    echo "Usage: sbatch bash_scripts/submit_grid_search.sh <tool> <val_dir> <gt_dir> <output_root> [<model_path>] [<pretrained>]"
     exit 1
 fi
 
@@ -34,7 +34,7 @@ mkdir -p "$TMPDIR"
 PIXIBIN="$WD/infrastructure/apps/pixi/bin/pixi"
 if [[ ! -x "$PIXIBIN" ]]; then
     echo "[INFO] Pixi binary not found; running install.sh"
-    bash "$WD/install.sh"
+    bash "$WD/bash_scripts/install.sh"
 fi
 
 TOOL=$1
@@ -83,14 +83,6 @@ fi
 "${COMMAND[@]}"
 
 echo "[INFO] Grid search complete"
-if [ "$TOOL" = "ufish" ]; then
-    VARIANTS=("$TAG" "${TOOL}_chunk${PRETRAINED:+_pretrained}")
-else
-    VARIANTS=("$TAG")
-fi
-for v in "${VARIANTS[@]}"; do
-    echo "[INFO] $v"
-    echo "[INFO]   sweep CSV:         $OUTPUT_ROOT/$v/${v}_threshold_sweep.csv"
-    echo "[INFO]   optimal per type:  $OUTPUT_ROOT/$v/${v}_optimal_thresholds.csv"
-    echo "[INFO]   predictions:       $OUTPUT_ROOT/$v/optimal/"
-done
+echo "[INFO]   sweep CSV:         $OUTPUT_ROOT/$TAG/${TAG}_threshold_sweep.csv"
+echo "[INFO]   optimal per type:  $OUTPUT_ROOT/$TAG/${TAG}_optimal_thresholds.csv"
+echo "[INFO]   predictions:       $OUTPUT_ROOT/$TAG/optimal/"

@@ -13,7 +13,7 @@
 
 # Inference SLURM Batch Script
 # Usage:
-# sbatch scripts/submit_run_inference.sh <tool> <input_dir> <output_root> [<model_path>] [<threshold>] [<pretrained>]
+# sbatch bash_scripts/submit_run_inference.sh <tool> <input_dir> <output_root> [<model_path>] [<threshold>] [<pretrained>]
 #   <model_path>  optional, "" to use the tool default
 #   <threshold>   optional, "" to use the tool default
 #   <pretrained>  optional, pass "pretrained" to use the tool's pretrained model
@@ -21,7 +21,7 @@
 set -eu
 
 if [ $# -lt 3 ]; then
-    echo "Usage: sbatch scripts/submit_run_inference.sh <tool> <input_dir> <output_root> [<model_path>] [<threshold>] [<pretrained>]"
+    echo "Usage: sbatch bash_scripts/submit_run_inference.sh <tool> <input_dir> <output_root> [<model_path>] [<threshold>] [<pretrained>]"
     exit 1
 fi
 
@@ -35,7 +35,7 @@ mkdir -p "$TMPDIR"
 PIXIBIN="$WD/infrastructure/apps/pixi/bin/pixi"
 if [[ ! -x "$PIXIBIN" ]]; then
     echo "[INFO] Pixi binary not found; running install.sh"
-    bash "$WD/install.sh"
+    bash "$WD/bash_scripts/install.sh"
 fi
 
 TOOL=$1
