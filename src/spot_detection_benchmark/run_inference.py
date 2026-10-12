@@ -184,7 +184,24 @@ def run_inference(
         from ufish.api import UFish
 
         uf = UFish()
-        uf.load_weights_from_path(str(model))
+        if str(model).endswith(".onnx"):
+            # build the session ourselves: by default onnxruntime starts one thread
+            # per core of the node instead of per core SLURM allocated, and crawls
+            import onnxruntime
+
+            opts = onnxruntime.SessionOptions()
+            opts.intra_op_num_threads = (
+                len(os.sched_getaffinity(0))
+                if hasattr(os, "sched_getaffinity")
+                else os.cpu_count()
+            )
+            opts.inter_op_num_threads = 1
+            uf.ort_session = onnxruntime.InferenceSession(
+                str(model), opts, providers=["CPUExecutionProvider"]
+            )
+            print(f"[{tool}] onnxruntime threads: {opts.intra_op_num_threads}")
+        else:
+            uf.load_weights_from_path(str(model))
 
         for tif in images:
             image = tifffile.imread(tif)
