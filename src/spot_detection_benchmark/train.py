@@ -141,9 +141,7 @@ def train(
 
         models_dir = Path(
             output_dir
-            or os.environ.get(
-                "PISCIS_MODELS_DIR", REPO_ROOT / "models" / ".piscis" / "models"
-            )
+            or os.environ.get("PISCIS_MODELS_DIR", REPO_ROOT / "models" / "piscis")
         )
         checkpoints_dir = Path(
             os.environ.get(
@@ -236,13 +234,19 @@ if __name__ == "__main__":
         help=f"Name of the trained model (piscis only, default: {DEFAULT_PISCIS_MODEL_NAME})",
     )
     parser.add_argument(
-        "--epochs", type=int, default=None, help="Number of epochs (tool default if omitted)"
+        "--epochs",
+        type=int,
+        default=None,
+        help="Number of epochs (tool default if omitted)",
     )
     parser.add_argument(
         "--lr", type=float, default=None, help="Learning rate (tool default if omitted)"
     )
     parser.add_argument(
-        "--batch_size", type=int, default=None, help="Batch size (tool default if omitted)"
+        "--batch_size",
+        type=int,
+        default=None,
+        help="Batch size (tool default if omitted)",
     )
     args = parser.parse_args()
 

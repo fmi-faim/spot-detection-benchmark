@@ -11,25 +11,25 @@ import tifffile
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# LoG spot size in pixels (no optics metadata to derive it from wavelength/NA)
+# LoG spot size in pixels
 LOG_LATERAL_SIGMA = 1.5
 
 DEFAULT_MODELS = {
     "deepblink": REPO_ROOT
     / "models"
-    / "models_deepblink"
-    / "260827_095918_deepBlink_is_sweet.h5",
-    "spotiflow": REPO_ROOT / "models" / "models_spotiflow" / "spotiflow_customed",
-    "piscis": "piscis_customed",
-    "ufish": REPO_ROOT / "models" / "models_ufish" / "best_model.pth",
-    "log": None,  # classical method, no model
+    / "deepblink"
+    / "261005_162813_deepBlink_is_sweet.h5",
+    "spotiflow": REPO_ROOT / "models" / "spotiflow" / "spotiflow_customed",
+    "piscis": "piscis_customed_512",
+    "ufish": REPO_ROOT / "models" / "ufish" / "best_model.pth",
+    "log": None,
 }
 
 DEFAULT_PRETRAINED_MODELS = {
-    "deepblink": REPO_ROOT / "models" / "models_deepblink" / "smfish1.h5",
-    "spotiflow": REPO_ROOT / "models" / "models_spotiflow" / "general",
+    "deepblink": REPO_ROOT / "models" / "deepblink" / "smfish1.h5",
+    "spotiflow": REPO_ROOT / "models" / "spotiflow" / "general",
     "piscis": "20251212",
-    "ufish": REPO_ROOT / "models" / "models_ufish" / "v1.0-alldata-ufish_c32.onnx",
+    "ufish": REPO_ROOT / "models" / "ufish" / "v1.0-alldata-ufish_c32.onnx",
     "log": None,
 }
 
@@ -148,9 +148,7 @@ def run_inference(
         import piscis.paths
 
         models_dir = Path(
-            os.environ.get(
-                "PISCIS_MODELS_DIR", REPO_ROOT / "models" / ".piscis" / "models"
-            )
+            os.environ.get("PISCIS_MODELS_DIR", REPO_ROOT / "models" / "piscis")
         )
         models_dir.mkdir(parents=True, exist_ok=True)
         piscis.paths.MODELS_DIR = models_dir
