@@ -33,6 +33,7 @@ ufish = ["ufish"]
 # plain ufish environment stays installable on Windows machines without GPU)
 ufish-gpu = ["ufish", "cuda"]
 piscis = ["piscis"]
+log = ["log"]
 
 [tool.pixi.environments.spotiflow]
 features = ["spotiflow"]
@@ -74,6 +75,9 @@ pyqt6 = ">=6.8.1,<7"
 
 [tool.pixi.feature.ufish.dependencies]
 ufish = ">=0.1.1,<0.2"
+
+[tool.pixi.feature.log.dependencies]
+scikit-image = ">=0.26,<0.27"
 
 [tool.pixi.feature.cuda]
 platforms = ["linux-64"]
