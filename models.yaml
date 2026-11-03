@@ -1,0 +1,22 @@
+# Default models of each tool. Paths are relative to the repository root;
+# Piscis takes a model name from its registry instead of a path.
+# Leave a tool out (or set it to null) when there is no such model.
+
+trained:
+  2d:
+    deepblink: models/deepblink/261005_162813_deepBlink_is_sweet.h5
+    spotiflow: models/spotiflow/spotiflow_customed
+    piscis: piscis_customed_512
+    ufish: models/ufish/best_model.pth
+  3d:
+    spotiflow: null
+
+pretrained:
+  2d:
+    deepblink: models/deepblink/smfish1.h5
+    spotiflow: models/spotiflow/general
+    piscis: "20251212"       
+    # the authors' model, from huggingface.co/GangCaoLab/U-FISH
+    ufish: models/ufish/v1.0-alldata-ufish_c32.pth
+  3d:
+    spotiflow: models/spotiflow/smfish_3d

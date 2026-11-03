@@ -1,7 +1,7 @@
 [project]
 dependencies = []
 name = "spot-detection-benchmark"
-requires-python = ">= 3.11"
+requires-python = ">= 3.9"
 version = "0.1.0"
 
 [build-system]
@@ -15,22 +15,20 @@ platforms = ["win-64","linux-64"]
 [tool.pixi.pypi-dependencies]
 spot_detection_benchmark = { path = ".", editable = true }
 
-[tool.pixi.tasks]
-
 [tool.pixi.feature.deepblink.dependencies]
 python = "3.9.*"
 numpy = "<2"
-jupyterlab = ">=4.4.6,<5"
-
-[tool.pixi.feature.deepblink.tasks]
-deep_jlab = "jupyter lab"
 
 [tool.pixi.environments]
+# Jupyter only where the notebooks run: default (Evaluation_grid_search) and napari
+# (compare_tools_no_groundtruth_V2, which opens a napari viewer)
+default = ["jupyter"]
+napari = ["napari", "jupyter"]
 deepblink = { features = ["deepblink"], no-default-feature = true }
-napari = ["napari"]
 ufish = ["ufish"]
-# ufish with CUDA PyTorch, for training on the cluster (linux only, so the
-# plain ufish environment stays installable on Windows machines without GPU)
+# ufish with CUDA PyTorch, for training, inference and grid
+# search on the cluster's GPUs (linux only, so the plain ufish environment stays
+# installable on Windows machines without GPU)
 ufish-gpu = ["ufish", "cuda"]
 piscis = ["piscis"]
 log = ["log"]
@@ -47,15 +45,14 @@ setuptools = "<81"
 git-lfs = ">=3.7.1,<4"
 pandas = ">=3.0.5,<4"
 tifffile = ">=2026.7.31,<2027"
-jupyterlab = ">=4.6.3,<5"
 scipy = ">=1.18.0,<2"
 matplotlib = ">=3.10.9,<4"
 numpy = ">=2.5.2,<3"
-pathlib = ">=1.0.1,<2"
 huggingface_hub = ">=1.31.0,<2"
+pyyaml = ">=6,<7"
 
 [dependency-groups]
-deepblink = ["tensorflow[and-cuda]<2.16", "deepblink>=0.1.4,<0.2"]
+deepblink = ["tensorflow[and-cuda]<2.16", "deepblink>=0.1.4,<0.2", "trackpy>=0.7,<0.8"]
 spotiflow = ["torch>=2.13.0,<3", "torchvision>=0.28.0,<0.29", "spotiflow>=0.6.5,<0.7"]
 piscis = ["piscis"]
 
@@ -64,10 +61,9 @@ PYTHONPATH = "tools"
 
 [tool.pixi.feature.spotiflow.dependencies]
 python = "3.12.*"
-jupyterlab = ">=4.6.1,<5"
 
-[tool.pixi.feature.spotiflow.tasks]
-spotiflow_jlab = "jupyter lab"
+[tool.pixi.feature.jupyter.dependencies]
+jupyterlab = ">=4.6.3,<5"
 
 [tool.pixi.feature.napari.dependencies]
 napari = ">=0.8.0,<0.9"
@@ -86,8 +82,19 @@ system-requirements = { cuda = "12" }
 [tool.pixi.feature.cuda.dependencies]
 pytorch-gpu = "*"
 
+# The deepblink environment runs Python 3.9 and imports the shared modules of
+# src/spot_detection_benchmark, so the code must run on 3.9. Modern annotations
+# (`int | None`, `list[str]`) are fine as long as the file starts with
+# `from __future__ import annotations`; 3.10+ runtime features (match, isinstance
+# with `X | Y`, zip(strict=...)) are not.
 [tool.ruff]
 target-version = "py39"
 
-[tool.ruff.lint]
-ignore = ["UP007"]
+# the deepblink and spotiflow environments leave out the default feature, so the
+# project's package is installed in them explicitly
+[tool.pixi.feature.deepblink.pypi-dependencies]
+spot_detection_benchmark = { path = ".", editable = true }
+
+[tool.pixi.feature.spotiflow.pypi-dependencies]
+spot_detection_benchmark = { path = ".", editable = true }
+
