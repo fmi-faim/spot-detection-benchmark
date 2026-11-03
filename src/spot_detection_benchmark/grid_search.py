@@ -1,28 +1,46 @@
+from __future__ import annotations
+
 import argparse
+import logging
 import shutil
-import warnings
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import scipy.spatial
-from evaluation_metrics import EPS, f1_integral, linear_sum_assignment, offset_euclidean
-from run_inference import _results_dirname, run_inference
+import tifffile
 
-CUTOFF = 3.0
-MDIST = 3.0
-N_CUTOFFS = 50
-MIN_TRUE = 1
+from spot_detection_benchmark.detectors import (
+    TOOLS,
+    detect,
+    make_detector,
+    resolve_model,
+)
+from spot_detection_benchmark.evaluate import MIN_TRUE, evaluate_folder, summarize
+from spot_detection_benchmark.run_inference import (
+    add_detection_args,
+    detector_kwargs_from_args,
+    predict_folder,
+)
+from spot_detection_benchmark.utils import (
+    list_images,
+    results_dirname,
+    setup_logging,
+    subset_of,
+    write_run_info,
+)
+
+log = logging.getLogger(__name__)
 
 THRESHOLD_GRIDS = {
-    "deepblink": np.round(np.arange(0.1, 1.0, 0.05), 3).tolist(),
-    "spotiflow": np.round(np.arange(0.1, 1.0, 0.05), 3).tolist(),
-    "piscis": np.round(np.arange(0.1, 1.2, 0.05), 3).tolist(),
-    "ufish": np.round(np.arange(0.1, 1.0, 0.05), 3).tolist(),
-    # h-maxima height in grey levels: log-spaced integers covering both the
-    # uint8 and uint16 image types (the optimum is picked per image type)
+    "deepblink": np.round(np.arange(0.1, 1.05, 0.05), 3).tolist(),
+    "spotiflow": np.round(np.arange(0.1, 1.05, 0.05), 3).tolist(),
+    "piscis": np.round(np.arange(0.1, 1.25, 0.05), 3).tolist(),
+    "ufish": np.round(np.arange(0.1, 1.05, 0.05), 3).tolist(),
     "log": np.unique(np.geomspace(1, 3000, 30).astype(int)).tolist(),
 }
+
+# images are kept in memory between thresholds only below this total size
+DEFAULT_CACHE_GB = 4.0
 
 # column order of the sweep CSV (one row per threshold x image)
 COLUMNS = [
@@ -42,90 +60,11 @@ COLUMNS = [
 ]
 
 
-def _load(csv):
-    df = pd.read_csv(csv)
-    return df[["axis-0", "axis-1"]].to_numpy() if len(df) else np.empty((0, 2))
-
-
-def score_image(pred, true):
-    pred = np.asarray(pred, float).reshape(-1, 2)
-    true = np.asarray(true, float).reshape(-1, 2)
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        f1i = float(f1_integral(pred, true, mdist=MDIST, n_cutoffs=N_CUTOFFS))
-
-    if pred.size == 0 and true.size == 0:
-        tp = fp = fn = 0
-        dist_err = np.nan
-    elif pred.size == 0:
-        tp, fp, fn = 0, 0, len(true)
-        dist_err = np.nan
-    elif true.size == 0:
-        tp, fp, fn = 0, len(pred), 0
-        dist_err = np.nan
-    else:
-        matrix = scipy.spatial.distance.cdist(pred, true, "euclidean")
-        rows, cols = linear_sum_assignment(matrix, CUTOFF)
-        tp = len(rows)
-        fp = len(pred) - tp
-        fn = len(true) - tp
-        if tp:
-            offs = [
-                (pred[r][0] - true[c][0], pred[r][1] - true[c][1])
-                for r, c in zip(rows, cols)
-            ]
-            dist_err = float(np.mean(offset_euclidean(offs)))
-        else:
-            dist_err = np.nan
-
-    prec = tp / (tp + fp + EPS)
-    rec = tp / (tp + fn + EPS)
-    f1 = 2 * prec * rec / (prec + rec + EPS)
-
-    return {
-        "TP": tp,
-        "FP": fp,
-        "FN": fn,
-        "precision": prec,
-        "recall": rec,
-        "f1": f1,
-        "f1_integral": f1i,
-        "distance_error": dist_err,
-        "n_pred": len(pred),
-        "n_true": len(true),
-    }
-
-
-def score_folder(pred_dir, gt_dir):
-    """Score every prediction CSV against its stem-matched ground truth."""
-    rows = []
-    for pcsv in sorted(Path(pred_dir).glob("*.csv")):
-        gcsv = Path(gt_dir) / pcsv.name
-        if not gcsv.exists():
-            continue
-        m = score_image(_load(pcsv), _load(gcsv))
-        m["image"] = pcsv.stem
-        m["subset"] = pcsv.stem.split("_")[0]  # data source = filename prefix
-        rows.append(m)
-    return pd.DataFrame(rows)
-
-
 def optimal_per_subset(sweep):
     """Threshold maximising mean F1-integral, for each image type."""
-    scored = sweep[sweep["n_true"] >= MIN_TRUE]
-    by_subset_thr = (
-        scored.groupby(["subset", "threshold"])
-        .agg(
-            f1_integral_mean=("f1_integral", "mean"),
-            precision_mean=("precision", "mean"),
-            recall_mean=("recall", "mean"),
-            n_images=("image", "nunique"),
-        )
-        .reset_index()
-    )
-    best_idx = by_subset_thr.groupby("subset")["f1_integral_mean"].idxmax()
-    return by_subset_thr.loc[
+    summary = summarize(sweep, by=["threshold", "subset"], add_all=False)
+    best_idx = summary.groupby("subset")["f1_integral_mean"].idxmax()
+    return summary.loc[
         best_idx,
         [
             "subset",
@@ -138,112 +77,155 @@ def optimal_per_subset(sweep):
     ].rename(columns={"threshold": "optimal_threshold"})
 
 
-def grid_search(tool, val_dir, gt_dir, output_root, model, pretrained=False):
-    """Sweep the detection threshold on the validation set.
+def _read_images(images, cache_gb):
+    size_gb = sum(p.stat().st_size for p in images) / 1e9
+    if size_gb > cache_gb:
+        log.info(
+            f"images take {size_gb:.1f} GB on disk (> --cache_gb {cache_gb}): "
+            "read from disk at every threshold"
+        )
+        return None
+    return {p: tifffile.imread(p) for p in images}
 
-    Writes:
-      1. a sweep CSV with one row per (threshold, image), holding that image's raw
-         metrics, so distributions and not just means are available downstream;
-      2. a predictions folder holding, for every image, the prediction made at
-         the optimal threshold *for that image's type*.
 
-    Args:
-        tool (str): Tool to sweep.
-        val_dir (str): Validation images folder.
-        gt_dir (str): Ground-truth CSVs folder (same stems as the images).
-        output_root (str): Root folder for sweep results.
-        model (str): Model file, folder or name. None uses the tool's default.
-        pretrained (bool): Sweep the tool's pretrained model instead of the one
-            trained in this project.
+def can_filter(detector, mode):
+    return mode in getattr(detector, "filter_modes", ())
 
-    Returns:
-        (best_thresholds_by_subset, per_image_dataframe), or None if nothing scored.
-    """
+
+def predict_all_spots(detector, images, mode, threshold, output_dir):
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    all_spots = {}
+    for tif in images:
+        spots = detect(detector, tifffile.imread(tif), mode, threshold)
+        spots.to_csv(output_dir / f"{tif.stem}.csv", index=False)
+        all_spots[tif.stem] = spots
+    return all_spots
+
+
+def write_filtered(all_spots, score_name, threshold, output_dir):
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for stem, spots in all_spots.items():
+        score = spots[score_name]
+        kept = spots[score.isna() | (score > threshold)]
+        kept.to_csv(output_dir / f"{stem}.csv", index=False)
+
+
+def grid_search(
+    tool,
+    val_dir,
+    gt_dir,
+    output_root,
+    mode,
+    model_path=None,
+    pretrained=False,
+    thresholds=None,
+    voxel_size=None,
+    detector_kwargs=None,
+    cache_gb=DEFAULT_CACHE_GB,
+):
     val_dir = Path(val_dir).resolve()
     gt_dir = Path(gt_dir).resolve()
     output_root = Path(output_root).resolve()
-
     tag = f"{tool}_pretrained" if pretrained else tool
-    subdir = _results_dirname(tool, pretrained)
-
-    # scratch folder, reused and wiped for every threshold
-    tmp_dir = output_root / f"_tmp_{tag}"
-
-    thresholds = THRESHOLD_GRIDS[tool]
-    sweep_rows = []
-
-    print(
-        f"[{tag}] sweeping {len(thresholds)} thresholds "
-        f"({thresholds[0]} -> {thresholds[-1]})"
+    subdir = results_dirname(tool, pretrained)
+    eval_kw = dict(
+        voxel_size=voxel_size if mode == "3d" else None, stack=mode == "2d_stack"
     )
 
-    for thr in thresholds:
-        print(f"  threshold={thr} ...", end=" ", flush=True)
+    model_path = resolve_model(tool, mode, pretrained, model_path)
+    detector = make_detector(
+        tool,
+        mode,
+        pretrained=pretrained,
+        model_path=model_path,
+        **(detector_kwargs or {}),
+    )
+    images = list_images(val_dir)
+    if not images:
+        raise FileNotFoundError(f"No .tif images found in {val_dir}")
+    thresholds = list(thresholds) if thresholds else THRESHOLD_GRIDS[tool]
+    tool_out = output_root / tag
+    tmp_dir = output_root / f"_tmp_{tag}"
+    sweep_method = "filter" if can_filter(detector, mode) else "predict"
 
-        # fresh scratch folder so stale CSVs can never be scored
+    log.info(
+        f"[{tag}] {len(images)} images, mode {mode}, model {model_path or 'none'}, "
+        f"sweeping {len(thresholds)} thresholds ({thresholds[0]} -> {thresholds[-1]}) "
+        f"by {sweep_method}"
+    )
+    if sweep_method == "filter":
+        lowest = min(thresholds)
+        all_spots_dir = tool_out / "all_spots" / subdir
+        if all_spots_dir.exists():
+            shutil.rmtree(all_spots_dir, ignore_errors=True)
+        log.info(f"[{tag}] predicting every image once at threshold={lowest}")
+        all_spots = predict_all_spots(detector, images, mode, lowest, all_spots_dir)
+    else:
+        cache = _read_images(images, cache_gb)
+
+    def predict_at(threshold):
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)
-
-        try:
-            run_inference(
-                tool, val_dir, tmp_dir, model, threshold=thr, pretrained=pretrained
+        if sweep_method == "filter":
+            write_filtered(all_spots, detector.score_name, threshold, tmp_dir / subdir)
+        else:
+            predict_folder(
+                detector,
+                images,
+                mode,
+                output_dir=tmp_dir / subdir,
+                cache=cache,
+                threshold=threshold,
             )
-        except Exception as e:
-            print(f"FAILED: {e}")
-            continue
+        return tmp_dir / subdir
 
-        pred_dir = tmp_dir / subdir
-        if not pred_dir.exists():
-            print("no output dir")
+    sweep_rows = []
+    for threshold in thresholds:
+        try:
+            pred_dir = predict_at(threshold)
+        except Exception:
+            log.exception(f"  threshold={threshold} FAILED")  # message + traceback
             continue
-
-        df = score_folder(pred_dir, gt_dir)
+        df = evaluate_folder(gt_dir, pred_dir, **eval_kw)
         if df.empty:
-            print("no scored images")
+            log.info(f"  threshold={threshold} no scored images")
             continue
-
-        df.insert(0, "threshold", thr)
+        df.insert(0, "threshold", threshold)
         sweep_rows.append(df)
-
         scored = df[df["n_true"] >= MIN_TRUE]
-        print(
-            f"F1i={scored['f1_integral'].mean():.4f} "
-            f"P={scored['precision'].mean():.4f} "
-            f"R={scored['recall'].mean():.4f}"
+        log.info(
+            f"  threshold={threshold} F1i={scored['f1_integral'].mean():.4f} "
+            f"P={scored['precision'].mean():.4f} R={scored['recall'].mean():.4f}"
         )
 
-    if tmp_dir.exists():
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    # ---------- sweep CSV + optimal thresholds ----------
     if not sweep_rows:
-        print(f"\n[{tag}] no valid results - check errors above")
+        log.error(f"[{tag}] no valid results - check errors above")
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir, ignore_errors=True)
         return None
 
-    tool_out = output_root / tag
     tool_out.mkdir(parents=True, exist_ok=True)
 
     sweep = pd.concat(sweep_rows, ignore_index=True)
     sweep = sweep[COLUMNS].sort_values(["subset", "threshold", "image"])
-    sweep_csv = tool_out / f"{tag}_threshold_sweep.csv"
-    sweep.to_csv(sweep_csv, index=False)
-    print(f"\n[{tag}] sweep saved to {sweep_csv}")
-    print(
+    sweep.to_csv(tool_out / f"{tag}_threshold_sweep.csv", index=False)
+    summarize(sweep, by=["threshold", "subset"]).to_csv(
+        tool_out / f"{tag}_threshold_summary.csv", index=False
+    )
+    log.info(f"[{tag}] sweep saved to {tool_out}")
+    log.info(
         f"[{tag}] {sweep['image'].nunique()} images x "
         f"{sweep['threshold'].nunique()} thresholds = {len(sweep)} rows "
         f"({sweep['subset'].nunique()} image types)"
     )
 
     best = optimal_per_subset(sweep)
-    best_csv = tool_out / f"{tag}_optimal_thresholds.csv"
-    best.to_csv(best_csv, index=False)
-    print(f"[{tag}] optimal threshold per image type:")
-    print(best.round(4).to_string(index=False))
-
+    best.to_csv(tool_out / f"{tag}_optimal_thresholds.csv", index=False)
+    log.info(f"[{tag}] optimal threshold per image type:")
+    log.info(best.round(4).to_string(index=False))
     best_by_subset = dict(zip(best["subset"], best["optimal_threshold"]))
-
-    # ---------- predictions at each type's optimal threshold ----------
-    needed = sorted(set(best_by_subset.values()))
 
     optimal_out = tool_out / "optimal"
     if optimal_out.exists():
@@ -251,85 +233,115 @@ def grid_search(tool, val_dir, gt_dir, output_root, model, pretrained=False):
     final_dir = optimal_out / subdir
     final_dir.mkdir(parents=True, exist_ok=True)
 
-    print(
-        f"\n[{tag}] rebuilding predictions at {len(needed)} distinct "
+    needed = sorted(set(best_by_subset.values()))
+    log.info(
+        f"[{tag}] writing the predictions at {len(needed)} distinct "
         f"optimal threshold(s): {needed}"
     )
-
-    for thr in needed:
-        print(f"  threshold={thr} ...", end=" ", flush=True)
-
-        if tmp_dir.exists():
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+    for threshold in needed:
         try:
-            run_inference(
-                tool, val_dir, tmp_dir, model, threshold=thr, pretrained=pretrained
-            )
-        except Exception as e:
-            print(f"FAILED: {e}")
+            pred_dir = predict_at(threshold)
+        except Exception:
+            log.exception(f"  threshold={threshold} FAILED")
             continue
-
-        # image types for which THIS threshold is the optimum
-        wanted = {s for s, t in best_by_subset.items() if t == thr}
+        wanted = {s for s, t in best_by_subset.items() if t == threshold}
         n_copied = 0
-        for pcsv in sorted((tmp_dir / subdir).glob("*.csv")):
-            if pcsv.stem.split("_")[0] in wanted:
+        for pcsv in sorted(pred_dir.glob("*.csv")):
+            if subset_of(pcsv.stem) in wanted:
                 shutil.copy2(pcsv, final_dir / pcsv.name)
                 n_copied += 1
-        print(f"{n_copied} CSVs for {sorted(wanted)}")
+        log.info(f"  threshold={threshold} {n_copied} CSVs for {sorted(wanted)}")
 
     if tmp_dir.exists():
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    # ---------- traceability: which threshold produced each image ----------
     provenance = pd.DataFrame(
         [
             {
                 "image": p.stem,
-                "subset": p.stem.split("_")[0],
-                "threshold": best_by_subset.get(p.stem.split("_")[0], np.nan),
+                "subset": subset_of(p.stem),
+                "threshold": best_by_subset.get(subset_of(p.stem), np.nan),
             }
             for p in sorted(final_dir.glob("*.csv"))
         ]
     )
     provenance.to_csv(optimal_out / f"{tag}_threshold_per_image.csv", index=False)
-    print(
-        f"[{tag}] {len(provenance)} predictions saved to {final_dir} "
-        f"(threshold per image recorded alongside)"
+    write_run_info(
+        tool_out,
+        script="grid_search",
+        tool=tool,
+        mode=mode,
+        model=model_path,
+        pretrained=pretrained,
+        thresholds=thresholds,
+        sweep_method=sweep_method,
+        all_spots_threshold=min(thresholds) if sweep_method == "filter" else None,
+        optimal_thresholds=best_by_subset,
+        settings=detector_kwargs or {},
+        voxel_size=voxel_size,
+        images_dir=val_dir,
+        gt_dir=gt_dir,
+        n_images=len(images),
     )
-
     return best_by_subset, sweep
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(
-        description="Grid search over detection thresholds on the validation set."
+        description="Grid search over detection thresholds on images with ground truth."
     )
     parser.add_argument(
         "--tool",
         required=True,
-        choices=["deepblink", "spotiflow", "piscis", "ufish", "log"],
+        choices=TOOLS,
     )
-    parser.add_argument("--val_dir", required=True, help="Validation images folder")
+    parser.add_argument("--val_dir", required=True, help="Images folder")
     parser.add_argument("--gt_dir", required=True, help="Ground-truth CSVs folder")
     parser.add_argument(
         "--output_root", required=True, help="Root folder for sweep results"
     )
     parser.add_argument(
-        "--model", default=None, help="Path to trained model (or name for piscis)"
+        "--model",
+        default=None,
+        help="Model file, folder or name. Omit to use the tool's model in models.yaml.",
     )
     parser.add_argument(
         "--pretrained",
         action="store_true",
         help="Sweep the tool's pretrained model instead of the one trained here.",
     )
+    parser.add_argument(
+        "--thresholds",
+        type=float,
+        nargs="+",
+        default=None,
+        help="Thresholds to try (default: THRESHOLD_GRIDS[tool])",
+    )
+    parser.add_argument(
+        "--cache_gb",
+        type=float,
+        default=DEFAULT_CACHE_GB,
+        help="Keep the images in memory between thresholds when they take less "
+        f"than this many GB on disk (default {DEFAULT_CACHE_GB})",
+    )
+    add_detection_args(parser)
     args = parser.parse_args()
+    setup_logging()
 
     grid_search(
         args.tool,
         args.val_dir,
         args.gt_dir,
         args.output_root,
-        args.model,
-        args.pretrained,
+        mode=args.mode,
+        model_path=args.model,
+        pretrained=args.pretrained,
+        thresholds=args.thresholds,
+        voxel_size=args.voxel_size,
+        detector_kwargs=detector_kwargs_from_args(args.tool, args),
+        cache_gb=args.cache_gb,
     )
+
+
+if __name__ == "__main__":
+    main()
