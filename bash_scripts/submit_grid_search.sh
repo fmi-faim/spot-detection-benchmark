@@ -13,14 +13,22 @@
 
 # Grid Search SLURM Batch Script
 # Usage:
-# sbatch bash_scripts/submit_grid_search.sh <tool> <val_dir> <gt_dir> <output_root> [<model_path>] [<pretrained>]
-#   <model_path>  optional, "" to use the tool default
-#   <pretrained>  optional, pass "pretrained" to sweep the tool's pretrained model
+# sbatch bash_scripts/submit_grid_search.sh <tool> --val_dir <dir> --gt_dir <dir> --output_root <dir> [grid_search.py options...]
+#
+# Every option of grid_search.py is passed through (python src/spot_detection_benchmark/grid_search.py -h):
+#   --model <path|name>   --pretrained   --thresholds t1 t2 ...
+#   --mode 2d|2d_stack|3d    --voxel_size Z Y X   --cache_gb 4   (and the detection options of run_inference.py)
+#
+# Choose the thresholds on the val split, report the benchmark on test.
+# Examples:
+#   sbatch bash_scripts/submit_grid_search.sh piscis --val_dir datasets/train_val_test_split/val --gt_dir datasets/train_val_test_split/val --output_root results/results_grid_search_ufish_dataset
+#   sbatch bash_scripts/submit_grid_search.sh deepblink --val_dir datasets/train_val_test_split/val --gt_dir datasets/train_val_test_split/val --output_root results/results_grid_search_ufish_dataset --pretrained
+#   sbatch bash_scripts/submit_grid_search.sh log --val_dir datasets/3d/image --gt_dir datasets/3d/csv --output_root results/results_grid_search_3d --mode 3d --voxel_size 300 100 100
 
 set -eu
 
-if [ $# -lt 4 ]; then
-    echo "Usage: sbatch bash_scripts/submit_grid_search.sh <tool> <val_dir> <gt_dir> <output_root> [<model_path>] [<pretrained>]"
+if [ $# -lt 1 ]; then
+    echo "Usage: sbatch bash_scripts/submit_grid_search.sh <tool> --val_dir <dir> --gt_dir <dir> --output_root <dir> [options...]"
     exit 1
 fi
 
@@ -38,51 +46,29 @@ if [[ ! -x "$PIXIBIN" ]]; then
 fi
 
 TOOL=$1
-VAL_DIR=$2
-GT_DIR=$3
-OUTPUT_ROOT=$4
-MODEL_PATH=${5:-""}
-PRETRAINED=${6:-""}
+shift
 
-# grid_search.py tags its outputs with _pretrained in pretrained mode
-if [ -n "$PRETRAINED" ]; then
-    TAG="${TOOL}_pretrained"
+# the plain ufish environment has a CPU-only PyTorch (for Windows)
+if [ "$TOOL" = "ufish" ]; then
+    PIXI_ENV="ufish-gpu"
 else
-    TAG="$TOOL"
+    PIXI_ENV="$TOOL"
 fi
 
 echo "[INFO] Job ID: $SLURM_JOB_ID"
 echo "[INFO] Node: $SLURMD_NODENAME"
 echo "[INFO] Starting grid search job $SLURM_JOB_ID"
-echo "[INFO] Tool: $TOOL"
-echo "[INFO] Validation data: $VAL_DIR"
-echo "[INFO] Ground truth: $GT_DIR"
-echo "[INFO] Output root: $OUTPUT_ROOT"
-echo "[INFO] Model: ${MODEL_PATH:-<tool default>}"
-echo "[INFO] Pretrained: ${PRETRAINED:-no}"
+echo "[INFO] Tool: $TOOL (pixi environment: $PIXI_ENV)"
+echo "[INFO] Arguments: $*"
 
-mkdir -p "$OUTPUT_ROOT"
-
-COMMAND=(
-    pixi run -e "$TOOL"
-    python src/spot_detection_benchmark/grid_search.py
-    --tool "$TOOL"
-    --val_dir "$VAL_DIR"
-    --gt_dir "$GT_DIR"
-    --output_root "$OUTPUT_ROOT"
-)
-
-if [ -n "$MODEL_PATH" ]; then
-    COMMAND+=(--model "$MODEL_PATH")
-fi
-
-if [ -n "$PRETRAINED" ]; then
-    COMMAND+=(--pretrained)
-fi
-
-"${COMMAND[@]}"
+pixi run -e "$PIXI_ENV" python src/spot_detection_benchmark/grid_search.py \
+    --tool "$TOOL" \
+    "$@"
 
 echo "[INFO] Grid search complete"
-echo "[INFO]   sweep CSV:         $OUTPUT_ROOT/$TAG/${TAG}_threshold_sweep.csv"
-echo "[INFO]   optimal per type:  $OUTPUT_ROOT/$TAG/${TAG}_optimal_thresholds.csv"
-echo "[INFO]   predictions:       $OUTPUT_ROOT/$TAG/optimal/"
+echo "[INFO]   <output_root>/<tag>/<tag>_threshold_sweep.csv    per threshold x image"
+echo "[INFO]   <output_root>/<tag>/<tag>_threshold_summary.csv  per threshold x image type"
+echo "[INFO]   <output_root>/<tag>/<tag>_optimal_thresholds.csv"
+echo "[INFO]   <output_root>/<tag>/optimal/                     predictions at the optimum"
+echo "[INFO]   <output_root>/<tag>/all_spots/                   every spot at the lowest threshold (tools swept by filter)"
+echo "[INFO]   <output_root>/<tag>/run_info.json                settings of the sweep"

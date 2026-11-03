@@ -18,7 +18,7 @@
 # Examples:
 #   sbatch --mem=128G bash_scripts/submit_train.sh deepblink --config <config_file>
 #   sbatch bash_scripts/submit_train.sh spotiflow --input_dir <input_dir> --output_dir <output_dir>
-#   sbatch bash_scripts/submit_train.sh piscis --input_dir <input_dir>
+#   sbatch bash_scripts/submit_train.sh piscis --input_dir <input_dir> [--output_dir <Piscis folder>] [--model_name <name>]
 #   sbatch bash_scripts/submit_train.sh ufish --input_dir <train_dir> --val_dir <val_dir> --output_dir <output_dir>
 #
 # Optional for every tool: --epochs, --lr, --batch_size (tool default if omitted)
@@ -46,7 +46,7 @@ fi
 TOOL=$1
 shift
 
-# the plain ufish environment has a CPU-only PyTorch (kept for Windows)
+# the plain ufish environment has a CPU-only PyTorch (for Windows)
 if [ "$TOOL" = "ufish" ]; then
     PIXI_ENV="ufish-gpu"
 else
@@ -58,7 +58,7 @@ echo "[INFO] Node: $SLURMD_NODENAME"
 echo "[INFO] Starting training job $SLURM_JOB_ID"
 echo "[INFO] Tool: $TOOL (pixi environment: $PIXI_ENV)"
 echo "[INFO] Arguments: $*"
-ssh
+
 # Run training in the tool's own environment
 pixi run -e "$PIXI_ENV" python src/spot_detection_benchmark/train.py \
     --tool "$TOOL" \

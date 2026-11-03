@@ -13,15 +13,22 @@
 
 # Inference SLURM Batch Script
 # Usage:
-# sbatch bash_scripts/submit_run_inference.sh <tool> <input_dir> <output_root> [<model_path>] [<threshold>] [<pretrained>]
-#   <model_path>  optional, "" to use the tool default
-#   <threshold>   optional, "" to use the tool default
-#   <pretrained>  optional, pass "pretrained" to use the tool's pretrained model
+# sbatch bash_scripts/submit_run_inference.sh <tool> --input_dir <dir> --output_root <dir> [run_inference.py options...]
+#
+# Every option of run_inference.py is passed through (python src/spot_detection_benchmark/run_inference.py -h):
+#   --model <path|name>   --threshold <value>   --pretrained
+#   --mode 2d|2d_stack|3d    --voxel_size Z Y X    --lateral_sigma / --axial_sigma (LoG)
+#   --merge_search_range, --merge_min_planes, ... (deepBlink 3D z merge)   --no_ufish_blend_3d
+#
+# Examples:
+#   sbatch bash_scripts/submit_run_inference.sh spotiflow --input_dir datasets/train_val_test_split/test --output_root results/results_inference_ufish_dataset
+#   sbatch bash_scripts/submit_run_inference.sh ufish --input_dir datasets/train_val_test_split/test --output_root results/results_inference_ufish_dataset --pretrained --threshold 0.4
+#   sbatch bash_scripts/submit_run_inference.sh log --input_dir datasets/3d/image --output_root results/inf_3d --mode 3d --voxel_size 300 100 100
 
 set -eu
 
-if [ $# -lt 3 ]; then
-    echo "Usage: sbatch bash_scripts/submit_run_inference.sh <tool> <input_dir> <output_root> [<model_path>] [<threshold>] [<pretrained>]"
+if [ $# -lt 1 ]; then
+    echo "Usage: sbatch bash_scripts/submit_run_inference.sh <tool> --input_dir <dir> --output_root <dir> [options...]"
     exit 1
 fi
 
@@ -39,48 +46,23 @@ if [[ ! -x "$PIXIBIN" ]]; then
 fi
 
 TOOL=$1
-INPUT_DIR=$2
-OUTPUT_ROOT=$3
-MODEL_POINTER=${4:-""}
-THRESHOLD=${5:-""}
-PRETRAINED=${6:-""}
+shift
 
-# Ensure environment is properly installed
+# the plain ufish environment has a CPU-only PyTorch (for Windows)
+if [ "$TOOL" = "ufish" ]; then
+    PIXI_ENV="ufish-gpu"
+else
+    PIXI_ENV="$TOOL"
+fi
+
 echo "[INFO] Job ID: $SLURM_JOB_ID"
 echo "[INFO] Node: $SLURMD_NODENAME"
 echo "[INFO] Starting inference job $SLURM_JOB_ID"
-echo "[INFO] Tool: $TOOL"
-echo "[INFO] Input data: $INPUT_DIR"
-echo "[INFO] Output root: $OUTPUT_ROOT"
-echo "[INFO] Model pointer: ${MODEL_POINTER:-<tool default>}"
-echo "[INFO] Threshold: ${THRESHOLD:-<tool default>}"
-echo "[INFO] Pretrained: ${PRETRAINED:-no}"
+echo "[INFO] Tool: $TOOL (pixi environment: $PIXI_ENV)"
+echo "[INFO] Arguments: $*"
 
-# Ensure output directory exists
-if [ -n "$OUTPUT_ROOT" ]; then
-    mkdir -p "$OUTPUT_ROOT"
-fi
-
-COMMAND=(
-    pixi run -e "$TOOL"
-    python src/spot_detection_benchmark/run_inference.py
-    --tool "$TOOL"
-    --input_dir "$INPUT_DIR"
-    --output_root "$OUTPUT_ROOT"
-)
-
-if [ -n "$MODEL_POINTER" ]; then
-    COMMAND+=(--model "$MODEL_POINTER")
-fi
-
-if [ -n "$THRESHOLD" ]; then
-    COMMAND+=(--threshold "$THRESHOLD")
-fi
-
-if [ -n "$PRETRAINED" ]; then
-    COMMAND+=(--pretrained)
-fi
-
-"${COMMAND[@]}"
+pixi run -e "$PIXI_ENV" python src/spot_detection_benchmark/run_inference.py \
+    --tool "$TOOL" \
+    "$@"
 
 echo "[INFO] Inference complete"
