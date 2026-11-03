@@ -8,3 +8,11 @@ ressources
 logs/
 infrastructure/
 runs
+
+# old code kept for reference, editor settings, test and build caches
+old/
+.vscode/
+*.egg-info/
+# training checkpoints (only the final models are kept)
+models/piscis/checkpoints/
+models/ufish/model_checkpoints/
