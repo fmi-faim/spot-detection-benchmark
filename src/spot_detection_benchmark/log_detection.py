@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import lru_cache
+
 import numpy as np
 from scipy.ndimage import gaussian_filter, gaussian_laplace
 from skimage.morphology import ball, disk, h_maxima
@@ -34,6 +36,36 @@ def compute_lateral_sigma(
     return wavelength / (2 * NA) / FWHM_TO_SIGMA / lateral_spacing
 
 
+def compute_axial_sigma(
+    wavelength: float,
+    NA: float,
+    axial_spacing: float,
+    refractive_index: float = 1.33,
+) -> float:
+    """Theoretical Z sigma (in planes) of a diffraction limited spot.
+
+    Uses the widefield axial resolution d_z = 2 * wavelength * n / NA**2 as the
+    full width at half maximum of the spot (a confocal PSF is ~1.4x narrower).
+
+    Parameters
+    ----------
+    wavelength :
+        Emission wavelength.
+    NA :
+        Numerical aperture.
+    axial_spacing :
+        Z step between planes, same unit as `wavelength`.
+    refractive_index :
+        Refractive index of the immersion medium (1.0 air, 1.33 water, 1.515 oil).
+
+    Returns
+    -------
+    Sigma in planes.
+    """
+    return 2 * wavelength * refractive_index / NA**2 / FWHM_TO_SIGMA / axial_spacing
+
+
+@lru_cache(maxsize=None)  # depends on the sigmas only: computed once per sigmas
 def estimate_log_rescale_factor(sigmas: tuple[float, ...]) -> float:
     """Rescale factor for a LoG filter response.
 
